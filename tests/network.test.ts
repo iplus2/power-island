@@ -190,3 +190,54 @@ test("Four real Socket.IO clients: rooms, mode validation, fog, transfers, resum
     await server.close();
   }
 });
+
+test("Deployment room limit rejects new rooms while existing room joining still works", async () => {
+  const saved = process.env.MAX_ROOMS;
+  process.env.MAX_ROOMS = "1";
+  let server: ReturnType<typeof createGameServer>;
+  try {
+    server = createGameServer();
+  } finally {
+    if (saved === undefined) delete process.env.MAX_ROOMS;
+    else process.env.MAX_ROOMS = saved;
+  }
+  await new Promise<void>((resolve) =>
+    server.http.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const port = (server.http.address() as { port: number }).port;
+  const clients = Array.from({ length: 2 }, () =>
+    io(`http://127.0.0.1:${port}`, {
+      transports: ["websocket"],
+      forceNew: true,
+    }),
+  );
+  try {
+    await Promise.all(
+      clients.map(
+        (s) => new Promise<void>((resolve) => s.on("connect", () => resolve())),
+      ),
+    );
+    const first = await request(clients[0], "join", {
+      create: true,
+      mode: "1v1",
+      name: "Host",
+    });
+    assert.ok(first.ok);
+    const denied = await request(clients[1], "join", {
+      create: true,
+      mode: "1v1",
+      name: "Guest",
+    });
+    assert.equal(denied.ok, false);
+    assert.match(denied.error!, /full/);
+    const joined = await request(clients[1], "join", {
+      code: first.code,
+      name: "Guest",
+    });
+    assert.ok(joined.ok);
+    assert.equal(server.rooms.size, 1);
+  } finally {
+    for (const s of clients) s.disconnect();
+    await server.close();
+  }
+});

@@ -8,6 +8,9 @@ import { CONFIG } from "../shared/config";
 import type { Command, Mode, Reply } from "../shared/types";
 
 export function createGameServer() {
+  const maxRooms = Number(process.env.MAX_ROOMS ?? 500);
+  if (!Number.isSafeInteger(maxRooms) || maxRooms < 1)
+    throw new Error("MAX_ROOMS must be a positive integer.");
   const rooms = new Map<string, Engine>();
   const sessions = new Map<
     string,
@@ -115,7 +118,8 @@ export function createGameServer() {
         if (data.create === true) {
           if (data.mode !== "1v1" && data.mode !== "2v2")
             throw new Error("Choose 1v1 or 2v2.");
-          if (rooms.size >= 500) throw new Error("Server is full. Try later.");
+          if (rooms.size >= maxRooms)
+            throw new Error("Server is full. Try later.");
           do {
             code = randomBytes(3).toString("hex").toUpperCase();
           } while (rooms.has(code));
