@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-server/
+.env
+work/
+.sites/
+
+.env.*
+playwright-report/
+outputs/*.tar.gz
+.DS_Store
+outputs/optimization_backlog.md
+
+# Private operations, historical records and local captures
+local/
+outputs/screenshots/
