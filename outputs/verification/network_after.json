@@ -1,0 +1,63 @@
+{
+  "seed": 20261002,
+  "players": 2,
+  "transport": [
+    "websocket",
+    "websocket"
+  ],
+  "measurement": "state event JSON UTF-8 bytes only; excludes framing, acknowledgments, input, TLS and network overhead",
+  "samples": [
+    {
+      "phase": "lobby",
+      "durationMs": 2000,
+      "messages": [
+        0,
+        0
+      ],
+      "applicationJsonBytes": [
+        0,
+        0
+      ],
+      "aggregateKbps": 0
+    },
+    {
+      "phase": "placement",
+      "durationMs": 2000,
+      "messages": [
+        10,
+        10
+      ],
+      "applicationJsonBytes": [
+        12580,
+        16130
+      ],
+      "aggregateKbps": 114.84
+    },
+    {
+      "phase": "playing-stationary",
+      "durationMs": 2000,
+      "messages": [
+        10,
+        10
+      ],
+      "applicationJsonBytes": [
+        6932,
+        7922
+      ],
+      "aggregateKbps": 59.416
+    },
+    {
+      "phase": "finished",
+      "durationMs": 2000,
+      "messages": [
+        0,
+        0
+      ],
+      "applicationJsonBytes": [
+        0,
+        0
+      ],
+      "aggregateKbps": 0
+    }
+  ]
+}

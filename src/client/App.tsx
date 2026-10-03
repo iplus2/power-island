@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { CONFIG, normalSpeed } from "../shared/config";
 import { attackCost } from "../shared/rules";
-import type { Mode, Reply, Snapshot } from "../shared/types";
+import {
+  restoreSnapshot,
+  type StatePacket,
+  type Point,
+  type Mode,
+  type Reply,
+  type Snapshot,
+} from "../shared/types";
 import { InteractionGesture } from "./gesture";
 import { World } from "./World";
 const defaultSocket = io(import.meta.env?.VITE_SERVER_URL || undefined, {
@@ -95,12 +102,16 @@ function Rules({ close }: { close: () => void }) {
           </article>
         </div>
         <p className="rule-note">
-          Desktop: WASD to move, E to interact, Q to sprint. Phone: joystick +
-          two buttons. The nearest eligible visible target within 8 units is
-          highlighted. A locked target leaving range cancels the action.
-          Standing still is safe. Disconnects allow 30 seconds to reconnect;
-          leaving surrenders only you. If both teams lose their final Core in
-          one tick, post-cost total Power decides; equal totals draw.
+          Desktop: WASD to move, E to interact, Q to sprint. Phone: tap the map
+          to move + two buttons. The nearest eligible visible target within 8
+          units is highlighted. A locked target leaving range cancels the
+          action. Standing still is safe. Disconnects allow 30 seconds to
+          reconnect; Leave immediately removes your seat; surrender keeps you in
+          the room. Refresh or a network loss allows 30 seconds with this tab’s
+          anonymous session. A new page without credentials cannot recover your
+          identity. Browser session restoration may retain credentials; server
+          restarts erase them. If both teams lose their final Core in one tick,
+          post-cost total Power decides; equal totals draw.
         </p>
         <button className="primary" onClick={close}>
           Got it. Let's play ↗
@@ -119,15 +130,14 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
     [error, setError] = useState(""),
     [rules, setRules] = useState(false),
     [busy, setBusy] = useState(false),
-    [stick, setStick] = useState({ x: 0, y: 0 }),
     [copied, setCopied] = useState(false);
   const suspended = useRef(false);
   suspended.current = rules;
   const stateRef = useRef(state),
     keys = useRef(new Set<string>()),
-    analog = useRef({ x: 0, y: 0 }),
+    moveTarget = useRef<Point | undefined>(undefined),
     gesture = useRef<InteractionGesture | undefined>(undefined),
-    joystickPointer = useRef<number | undefined>(undefined);
+    lastInput = useRef({ signature: "", at: 0 });
   stateRef.current = state;
   const sendMove = useCallback(
     (sprint = false) => {
@@ -138,18 +148,30 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
       )
         return;
       const k = keys.current;
-      socket.emit("input", {
-        x: analog.current.x + (Number(k.has("d")) - Number(k.has("a"))),
-        y: analog.current.y + (Number(k.has("s")) - Number(k.has("w"))),
+      const input = {
+        x: Number(k.has("d")) - Number(k.has("a")),
+        y: Number(k.has("s")) - Number(k.has("w")),
+        target: moveTarget.current,
         sprint,
-      });
+      };
+      const signature = JSON.stringify({ ...input, sprint: false });
+      const moving = !!(input.x || input.y || input.target);
+      const now = Date.now();
+      if (
+        !sprint &&
+        lastInput.current.signature === signature &&
+        (!moving || now - lastInput.current.at < 250)
+      )
+        return;
+      socket.emit("input", input);
+      lastInput.current = { signature, at: now };
     },
     [socket],
   );
   const stop = useCallback(() => {
     keys.current.clear();
-    analog.current = { x: 0, y: 0 };
-    setStick({ x: 0, y: 0 });
+    moveTarget.current = undefined;
+    lastInput.current = { signature: "", at: 0 };
     gesture.current?.cancel();
     if (socket.connected) socket.emit("input", { x: 0, y: 0 });
   }, [sendMove, socket]);
@@ -180,7 +202,28 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
       setConnected(false);
       stop();
     };
-    const onState = (s: Snapshot) => setState(s);
+    const onState = (packet: StatePacket) =>
+      setState((previous) => {
+        if (!sessionStorage.getItem(SESSION)) return undefined;
+        const next = restoreSnapshot(packet, previous);
+        if (next && moveTarget.current) {
+          const self = next.players.find((p) => p.id === next.selfId);
+          const oldSelf = previous?.players.find(
+            (p) => p.id === previous.selfId,
+          );
+          if (
+            !self ||
+            (oldSelf &&
+              Math.hypot(oldSelf.x - self.x, oldSelf.y - self.y) > 8) ||
+            Math.hypot(
+              self.x - moveTarget.current.x,
+              self.y - moveTarget.current.y,
+            ) < 0.25
+          )
+            moveTarget.current = undefined;
+        }
+        return next ?? previous;
+      });
     const onReplaced = () => {
       sessionStorage.removeItem(SESSION);
       setState(undefined);
@@ -210,6 +253,7 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
       if (key === "e") gesture.current?.down();
       else if (key === "q") sendMove(true);
       else {
+        moveTarget.current = undefined;
         keys.current.add(key);
         sendMove();
       }
@@ -217,7 +261,7 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
     const up = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if (key === "e") gesture.current?.up();
-      else {
+      else if (["w", "a", "s", "d"].includes(key)) {
         keys.current.delete(key);
         sendMove();
       }
@@ -293,11 +337,17 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
   }
   function leave() {
     stop();
-    socket.emit("leave", () => {
-      sessionStorage.removeItem(SESSION);
-      setState(undefined);
-      setError("");
-    });
+    const saved = sessionStorage.getItem(SESSION);
+    sessionStorage.removeItem(SESSION);
+    setState(undefined);
+    setError("");
+    if (saved) {
+      try {
+        socket.emit("leave", JSON.parse(saved));
+      } catch {
+        socket.emit("leave");
+      }
+    } else socket.emit("leave");
   }
   const self = state?.players.find((p) => p.id === state.selfId),
     rosterSelf = state?.roster.find((p) => p.id === state.selfId),
@@ -326,24 +376,20 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
       ? "Tap: half · Double: max · Hold: deposit"
       : `Attack costs ${targetCost} · Need > ${"kind" in target ? targetCost : target.power}`
     : "Find a building or a weaker enemy within range.";
-  function joystick(e: React.PointerEvent<HTMLDivElement>) {
-    const r = e.currentTarget.getBoundingClientRect(),
-      dx = (e.clientX - r.left - r.width / 2) / (r.width * 0.32),
-      dy = (e.clientY - r.top - r.height / 2) / (r.height * 0.32),
-      length = Math.max(1, Math.hypot(dx, dy));
-    analog.current = { x: dx / length, y: dy / length };
-    setStick(analog.current);
-    sendMove();
-  }
-  function releaseStick(e: React.PointerEvent<HTMLDivElement>) {
-    if (joystickPointer.current !== e.pointerId) return;
-    joystickPointer.current = undefined;
-    analog.current = { x: 0, y: 0 };
-    setStick({ x: 0, y: 0 });
-    sendMove();
-  }
   return (
-    <div className="app">
+    <div
+      className={"app" + (state?.phase === "playing" ? " active-match" : "")}
+      onBeforeInput={(e) => {
+        if (state?.phase === "playing") e.preventDefault();
+      }}
+      onFocusCapture={(e) => {
+        if (
+          state?.phase === "playing" &&
+          e.target.matches("input, textarea, [contenteditable]")
+        )
+          e.target.blur();
+      }}
+    >
       <header className="topbar">
         <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
           <span className="brand-symbol">⬡</span> POWER ISLAND
@@ -663,11 +709,18 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                 <World
                   state={state}
                   onPlace={(p) => call("place", p)}
+                  onMove={(p) => {
+                    if (!connected || rules) return;
+                    keys.current.clear();
+                    moveTarget.current = p;
+                    sendMove();
+                  }}
                   onInvalid={setError}
                 />
                 {!connected && (
                   <div className="board-status">
-                    Connection lost. Rejoin within 30 seconds.
+                    Connection lost. Reconnecting with this tab’s session for up
+                    to 30 seconds.
                   </div>
                 )}
               </section>
@@ -760,31 +813,7 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                       </p>
                     </div>
                     <div className="touch-controls">
-                      <div
-                        className="joystick"
-                        role="group"
-                        aria-label="Movement joystick"
-                        onPointerDown={(e) => {
-                          if (joystickPointer.current !== undefined) return;
-                          joystickPointer.current = e.pointerId;
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          joystick(e);
-                        }}
-                        onPointerMove={(e) => {
-                          if (joystickPointer.current === e.pointerId)
-                            joystick(e);
-                        }}
-                        onPointerUp={releaseStick}
-                        onPointerCancel={releaseStick}
-                        onLostPointerCapture={releaseStick}
-                      >
-                        <div
-                          className="stick"
-                          style={{
-                            transform: `translate(${stick.x * 28}px,${stick.y * 28}px)`,
-                          }}
-                        />
-                      </div>
+                      <p>Tap the map to move in a straight line.</p>
                       <div className="touch-buttons">
                         <button
                           className="interaction-button"
@@ -840,6 +869,11 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                       Back to Home
                     </button>
                   </div>
+                )}
+                {state.phase !== "finished" && rosterSelf?.alive && (
+                  <button className="text-button leave" onClick={leave}>
+                    Leave room immediately
+                  </button>
                 )}
                 {state.phase !== "finished" &&
                   (rosterSelf?.alive ? (

@@ -5,7 +5,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { Server, Socket } from "socket.io";
 import { Engine } from "./engine";
 import { CONFIG } from "../shared/config";
-import type { Command, Mode, Reply } from "../shared/types";
+import type { Command, Mode, Reply, StatePacket } from "../shared/types";
 
 export function createGameServer() {
   const maxRooms = Number(process.env.MAX_ROOMS ?? 500);
@@ -16,7 +16,10 @@ export function createGameServer() {
     string,
     { code: string; token: string; socketId?: string }
   >();
-  const lastUsed = new Map<string, number>();
+  const sent = new Map<
+    string,
+    { mapVersion: string; room: string; quiet: string }
+  >();
   const origins = (process.env.ALLOWED_ORIGINS ?? "")
     .split(",")
     .filter(Boolean);
@@ -75,19 +78,81 @@ export function createGameServer() {
     if (!id || !session || session.socketId !== socket.id) return;
     const engine = rooms.get(session.code);
     if (!engine) return;
-    lastUsed.set(session.code, Date.now());
     return { id, engine, session };
   }
   function publish(engine: Engine) {
     for (const p of engine.match.players) {
-      const s = sessions.get(p.id);
-      if (s?.socketId) io.to(s.socketId).emit("state", engine.snapshot(p.id));
+      const session = sessions.get(p.id);
+      if (!session?.socketId) continue;
+      const socketId = session.socketId;
+      const snapshot = engine.snapshot(p.id);
+      const {
+        boundary,
+        code,
+        mode,
+        selfId,
+        hostId,
+        roster,
+        zones,
+        swapRequests,
+        result,
+        notice,
+        ...dynamic
+      } = snapshot;
+      const room = {
+        code,
+        mode,
+        selfId,
+        hostId,
+        roster,
+        zones,
+        swapRequests,
+        result,
+        notice,
+      };
+      const roomJson = JSON.stringify(room);
+      const prior = sent.get(socketId);
+      const packet: StatePacket = { ...dynamic };
+      if (!prior || prior.mapVersion !== snapshot.mapVersion)
+        packet.boundary = boundary;
+      if (!prior || prior.room !== roomJson) packet.room = room;
+      const quiet = JSON.stringify({
+        ...dynamic,
+        serverTime: 0,
+        tick: 0,
+        room,
+      });
+      if (
+        snapshot.phase !== "playing" &&
+        prior?.mapVersion === snapshot.mapVersion &&
+        prior.quiet === quiet
+      )
+        continue;
+      io.to(socketId).emit("state", packet);
+      sent.set(socketId, {
+        mapVersion: snapshot.mapVersion,
+        room: roomJson,
+        quiet,
+      });
     }
+  }
+  function clean(engine: Engine) {
+    for (const [id, session] of sessions) {
+      if (session.code === engine.match.code && !engine.player(id)) {
+        if (session.socketId) {
+          sent.delete(session.socketId);
+          const socket = io.sockets.sockets.get(session.socketId);
+          if (socket) socket.data.playerId = undefined;
+        }
+        sessions.delete(id);
+      }
+    }
+    if (!engine.match.players.length) rooms.delete(engine.match.code);
   }
   function bind(socket: Socket, code: string, id: string, token: string) {
     sessions.set(id, { code, token, socketId: socket.id });
     socket.data.playerId = id;
-    lastUsed.set(code, Date.now());
+    sent.delete(socket.id);
   }
   io.on("connection", (socket) => {
     let bucket = 100,
@@ -144,6 +209,8 @@ export function createGameServer() {
         const d = payload as { playerId?: unknown; token?: unknown };
         if (typeof d?.playerId !== "string" || typeof d.token !== "string")
           throw new Error("Session unavailable.");
+        if (context(socket) && socket.data.playerId !== d.playerId)
+          throw new Error("Leave your current room first.");
         const session = sessions.get(d.playerId),
           engine = session ? rooms.get(session.code) : undefined;
         if (
@@ -162,8 +229,8 @@ export function createGameServer() {
             old.disconnect(true);
           }
         }
-        bind(socket, session.code, d.playerId, session.token);
         engine.reconnect(d.playerId);
+        bind(socket, session.code, d.playerId, session.token);
         ack({
           ok: true,
           code: session.code,
@@ -180,7 +247,7 @@ export function createGameServer() {
         const c = context(socket);
         if (!c) return;
         try {
-          if (c.engine.match.players.find((p) => p.connected)?.id !== c.id)
+          if (c.engine.hostId !== c.id)
             throw new Error("Only the room host can do this.");
           if (event === "start") c.engine.start();
           else c.engine.rematch();
@@ -235,9 +302,19 @@ export function createGameServer() {
     socket.on("input", (p: unknown) => {
       const c = context(socket);
       if (!c) return;
-      const d = p as { x: number; y: number; sprint?: boolean };
+      const d = p as {
+        x: number;
+        y: number;
+        sprint?: boolean;
+        target?: { x: number; y: number };
+      };
       if (d && typeof d.x === "number" && typeof d.y === "number")
-        c.engine.input(c.id, { x: d.x, y: d.y, sprint: d.sprint === true });
+        c.engine.input(c.id, {
+          x: d.x,
+          y: d.y,
+          sprint: d.sprint === true,
+          target: d.target,
+        });
     });
     socket.on("interactBegin", () => {
       const c = context(socket);
@@ -254,26 +331,45 @@ export function createGameServer() {
       c.engine.surrender(c.id);
       if (typeof ack === "function") ack({ ok: true });
     });
-    socket.on("leave", (ack: (r: Reply) => void) => {
-      const c = context(socket);
+    socket.on("leave", (payload: unknown, callback?: (r: Reply) => void) => {
+      const ack =
+        typeof payload === "function"
+          ? (payload as (r: Reply) => void)
+          : callback;
+      let c = context(socket);
+      // A disconnected tab may queue explicit Leave with its existing credentials,
+      // clear local identity immediately, then deliver it without resuming first.
+      if (!c && payload && typeof payload === "object") {
+        const d = payload as { playerId?: unknown; token?: unknown };
+        if (typeof d.playerId === "string" && typeof d.token === "string") {
+          const session = sessions.get(d.playerId);
+          const engine = session && rooms.get(session.code);
+          if (
+            session &&
+            engine &&
+            Buffer.byteLength(d.token) === Buffer.byteLength(session.token) &&
+            timingSafeEqual(Buffer.from(d.token), Buffer.from(session.token))
+          )
+            c = { id: d.playerId, engine, session };
+        }
+      }
       if (!c) {
         if (typeof ack === "function") ack({ ok: true });
         return;
       }
-      if (c.engine.match.phase === "lobby") {
-        c.engine.disconnect(c.id);
-        c.engine.retirements.set(c.id, "Left lobby.");
-        c.engine.step();
-      } else {
-        c.engine.surrender(c.id);
-        c.engine.disconnect(c.id);
+      c.engine.removePlayers(new Set([c.id]), "Left room.");
+      if (c.session.socketId) {
+        sent.delete(c.session.socketId);
+        const owner = io.sockets.sockets.get(c.session.socketId);
+        if (owner?.data.playerId === c.id) owner.data.playerId = undefined;
       }
       sessions.delete(c.id);
-      socket.data.playerId = undefined;
+      clean(c.engine);
       publish(c.engine);
       if (typeof ack === "function") ack({ ok: true });
     });
     socket.on("disconnect", () => {
+      sent.delete(socket.id);
       const c = context(socket);
       if (c) {
         c.session.socketId = undefined;
@@ -284,19 +380,10 @@ export function createGameServer() {
   });
   const timer = setInterval(() => {
     const now = Date.now();
-    for (const [code, engine] of rooms) {
+    for (const engine of rooms.values()) {
       engine.step(now);
       publish(engine);
-      // Empty abandoned rooms expire after ten minutes; matches are in-memory.
-      const connected = engine.match.players.some(
-        (p) => sessions.get(p.id)?.socketId,
-      );
-      if (!connected && now - (lastUsed.get(code) ?? now) > 600_000) {
-        rooms.delete(code);
-        lastUsed.delete(code);
-        for (const [id, s] of sessions)
-          if (s.code === code) sessions.delete(id);
-      }
+      clean(engine);
     }
   }, CONFIG.tickMs);
   return {

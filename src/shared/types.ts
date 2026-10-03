@@ -26,8 +26,10 @@ export type Player = Point & {
   disconnectedAt?: number;
   placementAt?: number;
 };
-export type BuildingView = Omit<Building, "power"> & { power?: number };
-export type Input = { x: number; y: number; sprint?: boolean };
+export type BuildingView = Omit<Building, "power" | "productionTick"> & {
+  power?: number;
+};
+export type Input = { x: number; y: number; sprint?: boolean; target?: Point };
 export type Action = { playerId: string; targetId: string; kind: Command };
 export type Result = {
   winner: TeamId | null;
@@ -51,17 +53,21 @@ export type Roster = Pick<
   Player,
   "id" | "name" | "teamId" | "alive" | "connected"
 > & { placed: boolean; timeoutRemaining?: number };
+export type PlayerView = Omit<
+  Player,
+  "zone" | "order" | "placementAt" | "disconnectedAt"
+>;
 export type Snapshot = {
   code: string;
   mode: Mode;
   phase: Phase;
-  seed: number;
+  mapVersion: string;
   tick: number;
   serverTime: number;
   selfId: string;
   hostId?: string;
   boundary: Point[];
-  players: Player[];
+  players: PlayerView[];
   buildings: BuildingView[];
   swapRequests: { fromId: string; toId: string }[];
   roster: Roster[];
@@ -78,3 +84,48 @@ export type Reply = {
   playerId?: string;
   token?: string;
 };
+
+// Dynamic vision-filtered state is always complete. Public geometry and room
+// metadata are sent on initialization/change, on the same reliable channel.
+export type RoomView = Pick<
+  Snapshot,
+  | "code"
+  | "mode"
+  | "selfId"
+  | "hostId"
+  | "roster"
+  | "zones"
+  | "swapRequests"
+  | "result"
+  | "notice"
+>;
+export type StatePacket = Omit<Snapshot, keyof RoomView | "boundary"> & {
+  boundary?: Point[];
+  room?: RoomView;
+};
+export function restoreSnapshot(
+  packet: StatePacket,
+  previous?: Snapshot,
+): Snapshot | undefined {
+  const boundary =
+    packet.boundary ??
+    (previous?.mapVersion === packet.mapVersion
+      ? previous.boundary
+      : undefined);
+  const room =
+    packet.room ??
+    (previous && {
+      code: previous.code,
+      mode: previous.mode,
+      selfId: previous.selfId,
+      hostId: previous.hostId,
+      roster: previous.roster,
+      zones: previous.zones,
+      swapRequests: previous.swapRequests,
+      result: previous.result,
+      notice: previous.notice,
+    });
+  if (!boundary || !room) return;
+  const { room: _metadata, boundary: _geometry, ...dynamic } = packet;
+  return { ...room, ...dynamic, boundary };
+}

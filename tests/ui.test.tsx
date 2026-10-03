@@ -1,3 +1,4 @@
+import { islandViewport } from "../src/client/mapViewport";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
@@ -103,8 +104,8 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
           const q = { x, y };
           if (
             inZone(q, p.zone, "1v1") &&
-            validPoint(q, engine.match.boundary) &&
-            engine.match.buildings.every((b) => distance(b, q) >= 6)
+            validPoint(q, engine.match.boundary, 3) &&
+            engine.match.buildings.every((b) => distance(b, q) >= 8)
           )
             return q;
         }
@@ -112,9 +113,17 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
     }
     const p = engine.match.players[0],
       point = position(p.id);
+    const mapView = islandViewport(engine.match.boundary);
+    const tapX = ((point.x - mapView.left) / mapView.size) * 600;
+    const tapY = ((point.y - mapView.top) / mapView.size) * 600;
     fireEvent.pointerDown(view.container.querySelector("canvas")!, {
-      clientX: point.x * 3,
-      clientY: point.y * 3,
+      clientX: tapX,
+      clientY: tapY,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(view.container.querySelector("canvas")!, {
+      clientX: tapX,
+      clientY: tapY,
       pointerId: 1,
     });
     assert.equal(p.coreId, undefined, "First click must only preview");
@@ -122,8 +131,13 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
       view.container.querySelector("canvas")!.getAttribute("data-selected"),
     );
     fireEvent.pointerDown(view.container.querySelector("canvas")!, {
-      clientX: point.x * 3,
-      clientY: point.y * 3,
+      clientX: tapX,
+      clientY: tapY,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(view.container.querySelector("canvas")!, {
+      clientX: tapX,
+      clientY: tapY,
       pointerId: 1,
     });
     await waitFor(() => assert.ok(view.getByText("Core established.")));
@@ -158,6 +172,17 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
     await waitFor(() => assert.ok(view.getByText("Coral team wins.")));
     fireEvent.click(view.getByText("Rematch · new island ↗"));
     await waitFor(() => assert.ok(view.getByText("Gather your team.")));
+    await act(async () => {
+      connection.disconnect();
+    });
+    fireEvent.click(view.getByText("Leave room"));
+    await waitFor(() => assert.ok(view.getByLabelText("Your callsign")));
+    assert.equal(sessionStorage.getItem("power-island-session"), null);
+    await act(async () => {
+      connection.connect();
+    });
+    await waitFor(() => assert.equal(engine.player(p.id), undefined));
+    assert.ok(view.getByLabelText("Your callsign"));
   } finally {
     cleanup();
     connection.disconnect();

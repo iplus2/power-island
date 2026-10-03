@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { io, type Socket } from "socket.io-client";
 import { createGameServer } from "../src/server/app";
 import { inZone } from "../src/shared/map";
-import type { Reply, Snapshot } from "../src/shared/types";
+import {
+  restoreSnapshot,
+  type StatePacket,
+  type Reply,
+  type Snapshot,
+} from "../src/shared/types";
 function request(s: Socket, event: string, payload?: unknown): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const cb = (err: Error | null, r: Reply) =>
@@ -11,6 +16,14 @@ function request(s: Socket, event: string, payload?: unknown): Promise<Reply> {
     if (payload === undefined) s.timeout(3000).emit(event, cb);
     else s.timeout(3000).emit(event, payload, cb);
   });
+}
+const snapshots = new WeakMap<Socket, Snapshot>();
+function track(s: Socket) {
+  s.on("state", (p: StatePacket) => {
+    const next = restoreSnapshot(p, snapshots.get(s));
+    if (next) snapshots.set(s, next);
+  });
+  return s;
 }
 function waitState(
   s: Socket,
@@ -21,7 +34,9 @@ function waitState(
       s.off("state", onState);
       reject(new Error("State timeout"));
     }, 4000);
-    const onState = (state: Snapshot) => {
+    const onState = (_packet: StatePacket) => {
+      const state = snapshots.get(s);
+      if (!state) return;
       if (predicate(state)) {
         clearTimeout(timer);
         s.off("state", onState);
@@ -43,6 +58,7 @@ test("Four real Socket.IO clients: rooms, mode validation, fog, transfers, resum
       transports: ["websocket"],
       forceNew: true,
     });
+    track(s);
     sockets.push(s);
     return s;
   }
@@ -182,7 +198,17 @@ test("Four real Socket.IO clients: rooms, mode validation, fog, transfers, resum
     const result = await over;
     assert.equal(result.result?.winner, 1);
     const oldSeed = engine.match.seed;
-    assert.equal((await request(resumed, "rematch")).ok, true);
+    assert.equal(
+      (
+        await request(
+          clients.find(
+            (s) => s.id === server.sessions.get(engine.hostId!)?.socketId,
+          )!,
+          "rematch",
+        )
+      ).ok,
+      true,
+    );
     assert.equal(engine.match.phase, "lobby");
     assert.notEqual(engine.match.seed, oldSeed);
   } finally {
@@ -238,6 +264,162 @@ test("Deployment room limit rejects new rooms while existing room joining still 
     assert.equal(server.rooms.size, 1);
   } finally {
     for (const s of clients) s.disconnect();
+    await server.close();
+  }
+});
+
+test("1v1 wire recovery, metadata suppression, explicit Leave, host transfer and all-disconnected cleanup", async () => {
+  const server = createGameServer();
+  await new Promise<void>((r) => server.http.listen(0, "127.0.0.1", r));
+  const port = (server.http.address() as { port: number }).port;
+  const sockets: Socket[] = [];
+  const packets = new WeakMap<Socket, StatePacket[]>();
+  async function client() {
+    const s = track(
+      io(`http://127.0.0.1:${port}`, {
+        transports: ["websocket"],
+        forceNew: true,
+      }),
+    );
+    sockets.push(s);
+    packets.set(s, []);
+    s.on("state", (p) => packets.get(s)!.push(p));
+    await new Promise<void>((r) => s.on("connect", r));
+    return s;
+  }
+  const pause = (ms = 250) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const a = await client(),
+      b = await client();
+    const h = await request(a, "join", {
+      create: true,
+      mode: "1v1",
+      name: "A",
+    });
+    const g = await request(b, "join", { code: h.code, name: "B" });
+    await pause();
+    const engine = server.rooms.get(h.code!)!;
+    assert.ok(packets.get(a)![0].boundary);
+    assert.ok(packets.get(a)![0].room);
+    const lobbyCount = packets.get(a)!.length;
+    await pause(650);
+    assert.equal(packets.get(a)!.length, lobbyCount);
+    await request(a, "start");
+    await pause();
+    const placement = snapshots.get(a)!;
+    assert.deepEqual(
+      placement.zones.map((z) => z.id),
+      [h.playerId],
+    );
+    assert.ok(
+      placement.buildings.every((b) => b.teamId !== null || !("power" in b)),
+    );
+    for (let i = 0; i < 2; i++) {
+      const p = engine.match.players[i];
+      let placed = false;
+      for (let x = 40; x < 160 && !placed; x += 10)
+        for (let y = 40; y < 160 && !placed; y += 10)
+          if (inZone({ x, y }, p.zone, "1v1"))
+            placed = (await request([a, b][i], "place", { x, y })).ok;
+      assert.ok(placed);
+    }
+    await pause(450);
+    const steady = packets.get(a)!.at(-1)!;
+    assert.equal(steady.boundary, undefined);
+    assert.equal(steady.room, undefined);
+    // Complete dynamic collections allow newly visible entities to appear/disappear.
+    const enemy = engine.player(g.playerId!)!,
+      self = engine.player(h.playerId!)!;
+    const old = { x: enemy.x, y: enemy.y };
+    enemy.x = self.x;
+    enemy.y = self.y;
+    await pause();
+    assert.ok(snapshots.get(a)!.players.some((p) => p.id === enemy.id));
+    Object.assign(enemy, old);
+    await pause();
+    assert.ok(!snapshots.get(a)!.players.some((p) => p.id === enemy.id));
+    a.disconnect();
+    await pause();
+    assert.equal(engine.hostId, g.playerId);
+    const resume = await client();
+    const missing = await request(resume, "resume", { playerId: h.playerId });
+    assert.equal(missing.ok, false);
+    assert.ok(
+      (
+        await request(resume, "resume", {
+          playerId: h.playerId,
+          token: h.token,
+        })
+      ).ok,
+    );
+    await pause();
+    assert.equal(engine.hostId, g.playerId);
+    assert.ok(packets.get(resume)![0].boundary);
+    assert.ok(packets.get(resume)![0].room);
+    assert.deepEqual(snapshots.get(resume)!.boundary, engine.match.boundary);
+    await request(resume, "surrender");
+    await pause();
+    assert.equal(snapshots.get(b)!.phase, "finished");
+    const finishedCount = packets.get(b)!.length;
+    await pause(450);
+    assert.equal(packets.get(b)!.length, finishedCount);
+    const oldVersion = snapshots.get(b)!.mapVersion;
+    assert.ok((await request(b, "rematch")).ok);
+    await pause();
+    assert.notEqual(snapshots.get(b)!.mapVersion, oldVersion);
+    assert.ok(packets.get(b)!.at(-1)!.boundary);
+    // A explicit host departure immediately removes credentials and transfers host.
+    await request(b, "leave");
+    await pause();
+    assert.equal(engine.hostId, h.playerId);
+    assert.equal(server.sessions.has(g.playerId!), false);
+    assert.equal(
+      (await request(b, "resume", { playerId: g.playerId, token: g.token })).ok,
+      false,
+    );
+    await request(resume, "leave");
+    assert.equal(server.rooms.has(h.code!), false);
+    assert.equal(server.sessions.size, 0);
+    // All sockets gone still retain room and credentials until the last 30s seat expires, even after results.
+    const r = await request(b, "join", {
+      create: true,
+      mode: "1v1",
+      name: "C",
+    });
+    await request(resume, "join", { code: r.code, name: "D" });
+    const ended = server.rooms.get(r.code!)!;
+    ended.match.phase = "finished";
+    b.disconnect();
+    resume.disconnect();
+    await pause();
+    assert.equal(ended.match.players.length, 2);
+    assert.ok(server.rooms.has(r.code!));
+    for (const p of ended.match.players) p.disconnectedAt = Date.now() - 30001;
+    await pause();
+    assert.equal(server.rooms.has(r.code!), false);
+    assert.equal(server.sessions.size, 0);
+    const cancel = await client();
+    const abandoned = await request(cancel, "join", {
+      create: true,
+      mode: "1v1",
+      name: "Offline Leave",
+    });
+    cancel.disconnect();
+    await pause();
+    const delivery = await client();
+    await request(delivery, "leave", {
+      playerId: abandoned.playerId,
+      token: "invalid",
+    });
+    assert.ok(server.rooms.has(abandoned.code!));
+    await request(delivery, "leave", {
+      playerId: abandoned.playerId,
+      token: abandoned.token,
+    });
+    assert.equal(server.rooms.has(abandoned.code!), false);
+    assert.equal(server.sessions.has(abandoned.playerId!), false);
+  } finally {
+    sockets.forEach((s) => s.disconnect());
     await server.close();
   }
 });

@@ -1,24 +1,75 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Snapshot, Point, BuildingView } from "../shared/types";
 import { distance, inZone, validPoint } from "../shared/map";
 import { CONFIG } from "../shared/config";
+import { islandViewport, mapPoint } from "./mapViewport";
 const colors = ["#8ff0c1", "#ff9b83"];
 export function World({
   state,
   onPlace,
   onInvalid,
+  onMove,
 }: {
   state: Snapshot;
   onPlace: (p: Point) => void;
+  onMove?: (p: Point) => void;
   onInvalid: (message: string) => void;
 }) {
+  const viewport = useMemo(
+    () => islandViewport(state.boundary),
+    [state.boundary],
+  );
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const pointers = useRef(new Set<number>());
+  const tap = useRef<
+    | { id: number; x: number; y: number; at: number; canceled: boolean }
+    | undefined
+  >(undefined);
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      pointers.current.add(e.pointerId);
+      if (pointers.current.size > 1 && tap.current) tap.current.canceled = true;
+    };
+    const move = (e: PointerEvent) => {
+      const t = tap.current;
+      if (
+        t?.id === e.pointerId &&
+        Math.hypot(e.clientX - t.x, e.clientY - t.y) > 8
+      )
+        t.canceled = true;
+    };
+    const up = (e: PointerEvent) => {
+      pointers.current.delete(e.pointerId);
+    };
+    const cancel = (e: PointerEvent) => {
+      if (tap.current) tap.current.canceled = true;
+      up(e);
+    };
+    const blur = () => {
+      tap.current = undefined;
+      pointers.current.clear();
+    };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointermove", move, true);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", cancel, true);
+    window.addEventListener("blur", blur);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointermove", move, true);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancel, true);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
   const [selected, setSelected] = useState<Point>();
   const selectedRef = useRef<Point | undefined>(undefined);
   selectedRef.current = selected;
   const placed = state.roster.find((p) => p.id === state.selfId)?.placed;
   useEffect(() => {
     setSelected(undefined);
-  }, [state.seed, state.phase, placed]);
+  }, [state.mapVersion, state.phase, placed]);
   const canvas = useRef<HTMLCanvasElement>(null),
     latest = useRef(state),
     previous = useRef(state),
@@ -37,7 +88,8 @@ export function World({
     const draw = () => {
       const s = latest.current,
         rect = el.getBoundingClientRect(),
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        dpr =
+          (window.devicePixelRatio || 1) * (window.visualViewport?.scale || 1);
       if (rect.width <= 0) {
         frame = requestAnimationFrame(draw);
         return;
@@ -54,8 +106,16 @@ export function World({
         fog.width = pixels;
         fog.height = pixels;
       }
-      const scale = pixels / 200;
-      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      const view = viewportRef.current;
+      const scale = pixels / view.size;
+      ctx.setTransform(
+        scale,
+        0,
+        0,
+        scale,
+        -view.left * scale,
+        -view.top * scale,
+      );
       ctx.clearRect(0, 0, 200, 200);
       ctx.fillStyle = "#0b202a";
       ctx.fillRect(0, 0, 200, 200);
@@ -126,7 +186,7 @@ export function World({
       );
       const interpolated = s.players.map((p) => {
         const old =
-          previous.current.seed === s.seed
+          previous.current.mapVersion === s.mapVersion
             ? previous.current.players.find((t) => t.id === p.id)
             : undefined;
         // A respawn is a discontinuity, never interpolate across the island.
@@ -262,7 +322,14 @@ export function World({
         ctx.fillText(p.id === s.selfId ? "YOU" : p.name, p.x, p.y + 4.5);
       }
       if (s.phase !== "placement") {
-        fc.setTransform(scale, 0, 0, scale, 0, 0);
+        fc.setTransform(
+          scale,
+          0,
+          0,
+          scale,
+          -view.left * scale,
+          -view.top * scale,
+        );
         fc.globalCompositeOperation = "source-over";
         fc.clearRect(0, 0, 200, 200);
         fc.fillStyle = "#08171ef5";
@@ -303,9 +370,17 @@ export function World({
       ctx.fillStyle = "#83a0a6";
       ctx.font = "2.5px system-ui";
       ctx.textAlign = "left";
-      ctx.fillText("N ↑", 6, 9);
+      ctx.fillText(
+        "N ↑",
+        view.left + view.size * 0.03,
+        view.top + view.size * 0.045,
+      );
       ctx.textAlign = "right";
-      ctx.fillText("200 × 200", 194, 193);
+      ctx.fillText(
+        "200 × 200",
+        view.left + view.size * 0.97,
+        view.top + view.size * 0.965,
+      );
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
@@ -313,19 +388,50 @@ export function World({
   }, []);
   return (
     <canvas
+      data-map-left={viewport.left}
+      data-map-top={viewport.top}
+      data-map-size={viewport.size}
       data-zone={state.zones.find((z) => z.id === state.selfId)?.zone}
       data-selected={selected ? `${selected.x},${selected.y}` : undefined}
       ref={canvas}
       className={"world " + (state.phase === "placement" ? "placing" : "")}
-      aria-label="Island map. Click once to select a Core position, then click the selected spot again to confirm."
+      aria-label="Island map. Tap to move during play. Select a Core position, then tap the selected spot again to confirm."
       onPointerDown={(e) => {
-        const self = state.roster.find((p) => p.id === state.selfId);
-        if (state.phase !== "placement" || !self?.alive || self.placed) return;
-        const r = e.currentTarget.getBoundingClientRect();
-        const point = {
-          x: ((e.clientX - r.left) / r.width) * 200,
-          y: ((e.clientY - r.top) / r.height) * 200,
+        if (e.button !== 0 || pointers.current.size > 1) {
+          if (tap.current) tap.current.canceled = true;
+          return;
+        }
+        tap.current = {
+          id: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+          at: performance.now(),
+          canceled: false,
         };
+      }}
+      onPointerUp={(e) => {
+        const t = tap.current;
+        tap.current = undefined;
+        if (
+          !t ||
+          t.id !== e.pointerId ||
+          t.canceled ||
+          performance.now() - t.at > 600 ||
+          Math.hypot(e.clientX - t.x, e.clientY - t.y) > 8
+        )
+          return;
+        const self = state.roster.find((p) => p.id === state.selfId);
+        if (!self?.alive) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        const point = mapPoint({ x: e.clientX, y: e.clientY }, r, viewport);
+        if (state.phase === "playing") {
+          if (validPoint(point, state.boundary)) {
+            onInvalid("");
+            onMove?.(point);
+          } else onInvalid("Tap a destination inside the coast.");
+          return;
+        }
+        if (state.phase !== "placement" || self.placed) return;
         const zone = state.zones.find((z) => z.id === state.selfId)?.zone;
         if (selected && distance(selected, point) <= 3) {
           onPlace(selected);

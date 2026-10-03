@@ -478,7 +478,7 @@ input::placeholder {
   width: 100%;
   aspect-ratio: 1;
   display: block;
-  touch-action: none;
+  touch-action: auto;
 }
 .world.placing {
   cursor: crosshair;
@@ -607,26 +607,7 @@ kbd {
 }
 .touch-controls {
   display: none;
-  touch-action: none;
-}
-.joystick {
-  width: 102px;
-  height: 102px;
-  border: 1px solid #47625c;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #172e30;
-  touch-action: none;
-  user-select: none;
-}
-.stick {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: #8ff0c166;
-  border: 1px solid var(--mint);
+  touch-action: auto;
 }
 .touch-buttons {
   display: flex;
@@ -953,10 +934,6 @@ kbd {
   .play-layout:has(.touch-controls) {
     padding-bottom: 125px;
   }
-  .joystick {
-    width: 94px;
-    height: 94px;
-  }
   .touch-buttons {
     flex-direction: row;
   }
@@ -998,10 +975,6 @@ kbd {
   .touch-controls {
     padding: 7px 20px;
   }
-  .joystick {
-    width: 70px;
-    height: 70px;
-  }
   .app {
     padding: 0 12px;
   }
@@ -1033,4 +1006,15 @@ kbd {
 .swap-offer button {
   padding: 8px 12px;
   margin-right: 12px;
+}
+
+/* Scoped to an already-started match; lobby, placement and results restore selection. */
+.active-match,
+.active-match * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.hud > .leave {
+  display: block;
 }

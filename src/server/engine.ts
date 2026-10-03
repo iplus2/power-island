@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { CONFIG, normalSpeed } from "../shared/config";
 import {
   constrainMove,
@@ -28,6 +29,39 @@ import type {
 
 export class Engine {
   match: Match;
+  hostId?: string;
+  mapVersion = randomUUID();
+  ensureHost() {
+    if (this.match.players.some((p) => p.id === this.hostId && p.connected))
+      return;
+    const candidates = this.match.players.filter((p) => p.connected);
+    this.hostId = candidates.length
+      ? candidates[Math.floor(Math.random() * candidates.length)].id
+      : undefined;
+  }
+  removePlayers(ids: Set<string>, reason: string) {
+    if (this.match.phase !== "lobby" && this.match.phase !== "finished") {
+      for (const id of ids)
+        if (this.player(id)?.alive) this.retirements.set(id, reason);
+      this.settle(this.teamTotals(), new Set(), new Set());
+    }
+    if (this.match.phase === "finished") {
+      for (const id of ids) {
+        const p = this.player(id);
+        if (p?.alive) this.retire(p, reason);
+      }
+    }
+    for (const id of ids) {
+      this.clearSwaps(id);
+      this.inputs.delete(id);
+      this.actions.delete(id);
+      this.locks.delete(id);
+      this.retirements.delete(id);
+      delete this.match.notices[id];
+    }
+    this.match.players = this.match.players.filter((p) => !ids.has(p.id));
+    this.ensureHost();
+  }
   inputs = new Map<string, Input & { at: number }>();
   actions = new Map<string, Action>();
   locks = new Map<string, { targetId: string; attack: boolean; at: number }>();
@@ -75,6 +109,7 @@ export class Engine {
       sprintTicks: 0,
       placementAt: now,
     });
+    this.ensureHost();
   }
   clearSwaps(id: string) {
     for (const [from, to] of this.swapRequests)
@@ -224,11 +259,19 @@ export class Engine {
       !Number.isFinite(input.y)
     )
       return;
+    if (
+      input.target &&
+      (!Number.isFinite(input.target.x) ||
+        !Number.isFinite(input.target.y) ||
+        !validPoint(input.target, this.match.boundary))
+    )
+      return;
     const previous = this.inputs.get(id);
     this.inputs.set(id, {
       x: Math.max(-1, Math.min(1, input.x)),
       y: Math.max(-1, Math.min(1, input.y)),
       sprint: !!(input.sprint || previous?.sprint),
+      target: input.target ? { ...input.target } : undefined,
       at: now,
     });
   }
@@ -263,18 +306,19 @@ export class Engine {
     this.inputs.delete(id);
     this.locks.delete(id);
     this.actions.delete(id);
+    this.ensureHost();
   }
   reconnect(id: string, now = Date.now()) {
     const p = this.player(id);
     if (!p) return;
     if (
       p.disconnectedAt !== undefined &&
-      now - p.disconnectedAt >= CONFIG.timeoutMs &&
-      p.alive
+      now - p.disconnectedAt >= CONFIG.timeoutMs
     )
-      this.retirements.set(id, "Reconnection window expired.");
+      throw new Error("Session expired. Join a new room.");
     p.connected = true;
     p.disconnectedAt = undefined;
+    this.ensureHost();
   }
   surrender(id: string) {
     if (this.player(id)?.alive) this.retirements.set(id, "Surrendered.");
@@ -361,6 +405,29 @@ export class Engine {
     }
   }
   step(now = Date.now()) {
+    const expired = new Set(
+      this.match.players
+        .filter(
+          (p) =>
+            !p.connected &&
+            p.disconnectedAt !== undefined &&
+            now - p.disconnectedAt >= CONFIG.timeoutMs,
+        )
+        .map((p) => p.id),
+    );
+    for (const id of expired)
+      if (this.player(id)?.alive)
+        this.retirements.set(id, "Disconnected for 30 seconds.");
+    // Settle active timeouts in the existing tick order, then release seats in
+    // every phase (including finished) and invalidate their sessions upstream.
+    try {
+      this.simulate(now);
+    } finally {
+      if (expired.size)
+        this.removePlayers(expired, "Disconnected for 30 seconds.");
+    }
+  }
+  private simulate(now: number) {
     const m = this.match;
     if (m.phase === "finished") return;
     for (const p of m.players)
@@ -426,18 +493,27 @@ export class Engine {
           p.sprintTicks = CONFIG.sprintTicks;
         }
         input.sprint = false;
-        const length = Math.hypot(input.x, input.y),
-          factor = length > 1 ? 1 / length : 1;
+        const dx = input.target ? input.target.x - p.x : input.x;
+        const dy = input.target ? input.target.y - p.y : input.y;
+        const length = Math.hypot(dx, dy),
+          factor = input.target
+            ? length
+              ? 1 / length
+              : 0
+            : length > 1
+              ? 1 / length
+              : 1;
         const speed =
           (normalSpeed(p.power) *
             (p.sprintTicks ? CONFIG.sprintMultiplier : 1) *
             CONFIG.tickMs) /
           1000;
+        const travel = input.target ? Math.min(speed, length) : speed;
         const pos = constrainMove(
           p,
           {
-            x: p.x + input.x * factor * speed,
-            y: p.y + input.y * factor * speed,
+            x: p.x + dx * factor * travel,
+            y: p.y + dy * factor * travel,
           },
           m.boundary,
         );
@@ -535,13 +611,13 @@ export class Engine {
       code: m.code,
       mode: m.mode,
       phase: m.phase,
-      seed: m.seed,
+      mapVersion: this.mapVersion,
       tick: m.tick,
       serverTime: now,
       selfId: id,
-      hostId: m.players.find((t) => t.connected)?.id,
+      hostId: this.hostId,
       boundary: m.boundary,
-      buildings: buildings.map((b) => {
+      buildings: buildings.map(({ productionTick: _private, ...b }) => {
         if (placement && b.teamId === null) {
           const { power: _hidden, ...view } = b;
           return view;
@@ -552,7 +628,15 @@ export class Engine {
         m.phase === "lobby"
           ? [...this.swapRequests].map(([fromId, toId]) => ({ fromId, toId }))
           : [],
-      players: players.map((t) => ({ ...t })),
+      players: players.map(
+        ({
+          zone: _zone,
+          order: _order,
+          placementAt: _placement,
+          disconnectedAt: _disconnect,
+          ...view
+        }) => view,
+      ),
       roster: m.players.map((t) => ({
         id: t.id,
         name: t.name,
@@ -567,11 +651,7 @@ export class Engine {
               ? Math.max(0, CONFIG.timeoutMs - (now - (t.placementAt ?? now)))
               : undefined,
       })),
-      zones: m.players.map((t) => ({
-        id: t.id,
-        teamId: t.teamId,
-        zone: t.zone,
-      })),
+      zones: placement ? [{ id: p.id, teamId: p.teamId, zone: p.zone }] : [],
       vision: playing ? visionSources(m, p.teamId) : [],
       targetId:
         m.phase === "playing" && p.alive ? nearest(m, p)?.id : undefined,
@@ -594,6 +674,7 @@ export class Engine {
     });
     this.swapRequests.clear();
     this.match = fresh.match;
+    this.mapVersion = fresh.mapVersion;
     this.inputs.clear();
     this.actions.clear();
     this.locks.clear();

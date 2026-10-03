@@ -1,7 +1,9 @@
 import { CONFIG } from "./config";
 import { distance } from "./map";
 import type { Building, Player, Point, Match, Command } from "./types";
-export function attackCost(target: Building | Player) {
+export function attackCost(
+  target: Pick<Building, "kind" | "power"> | Pick<Player, "power">,
+) {
   return Math.ceil(
     target.power *
       ("kind" in target ? (target.kind === "plant" ? 0.6 : 1) : 0.5),

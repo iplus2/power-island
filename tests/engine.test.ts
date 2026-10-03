@@ -555,3 +555,109 @@ test("Leaving a lobby preserves the remaining players chosen teams and fills the
   assert.equal(e.player("new")!.teamId, 0);
   assert.equal(e.player("new")!.order, 4);
 });
+
+test("Map targets use authoritative straight movement, stop at destination, lease expiry and keyboard takeover", () => {
+  const e = game(),
+    p = e.match.players[0];
+  const target = { x: p.x + (p.x < 100 ? 6 : -6), y: p.y };
+  e.input(p.id, { x: 0, y: 0, target }, 0);
+  e.step(200);
+  e.step(400);
+  assert.equal(p.x, target.x);
+  assert.equal(p.y, target.y);
+  e.step(600);
+  assert.equal(p.x, target.x);
+  e.input(p.id, { x: 0, y: 0, target: { x: 100, y: 100 } }, 1000);
+  e.step(1800);
+  assert.equal(p.x, target.x, "Expired lease must not move");
+  e.input(p.id, { x: 0, y: 1 }, 2000);
+  e.step(2200);
+  assert.ok(p.y > target.y);
+  assert.equal(e.inputs.get(p.id)?.target, undefined);
+  e.input(p.id, { x: 0, y: 0, target: { x: NaN, y: 100 } }, 2400);
+  assert.equal(e.inputs.get(p.id)?.at, 2000);
+  e.disconnect(p.id, 2400);
+  assert.equal(e.inputs.has(p.id), false);
+});
+
+test("Explicit host survives reconnect and rematch; timeout removes ended seats", () => {
+  const e = game("2v2");
+  assert.equal(e.hostId, "p0");
+  const order = e.match.players.map((p) => p.id);
+  e.disconnect("p0", 0);
+  const successor = e.hostId!;
+  assert.ok(["p1", "p2", "p3"].includes(successor));
+  e.reconnect("p0", 1);
+  assert.equal(e.hostId, successor);
+  assert.deepEqual(
+    e.match.players.map((p) => p.id),
+    order,
+  );
+  e.match.phase = "finished";
+  e.rematch();
+  assert.equal(e.hostId, successor);
+  e.match.phase = "finished";
+  for (const p of e.match.players) e.disconnect(p.id, 0);
+  assert.equal(e.hostId, undefined);
+  e.step(29999);
+  assert.equal(e.match.players.length, 4);
+  e.reconnect("p0", 29999);
+  assert.equal(e.hostId, "p0");
+  e.step(30000);
+  assert.deepEqual(
+    e.match.players.map((p) => p.id),
+    ["p0"],
+  );
+  e.disconnect("p0", 30000);
+  assert.throws(() => e.reconnect("p0", 60000), /expired/);
+  e.step(60000);
+  assert.equal(e.match.players.length, 0);
+});
+
+test("Public snapshots omit generation seed, other placement zones and private simulation bookkeeping", () => {
+  const e = game("2v2");
+  const view = e.snapshot("p0");
+  assert.equal("seed" in view, false);
+  assert.ok(view.mapVersion);
+  assert.deepEqual(view.zones, []);
+  for (const p of view.players)
+    for (const field of ["zone", "order", "placementAt", "disconnectedAt"])
+      assert.equal(field in p, false);
+  assert.ok(view.buildings.every((b) => !("productionTick" in b)));
+  e.match.phase = "placement";
+  assert.deepEqual(
+    e.snapshot("p0").zones.map((z) => z.id),
+    ["p0"],
+  );
+});
+
+test("Coastline fit reduces water margins and preserves square projection round trips for seeded maps", async () => {
+  const { islandViewport, mapPoint } =
+    await import("../src/client/mapViewport");
+  for (let seed = 1; seed <= 200; seed++) {
+    const { boundary } = generateMap(seed),
+      view = islandViewport(boundary);
+    assert.ok(view.size < 200);
+    for (const p of boundary) {
+      assert.ok(p.x >= view.left && p.x <= view.left + view.size);
+      assert.ok(p.y >= view.top && p.y <= view.top + view.size);
+      const rect = { left: -75, top: -180, width: 680, height: 680 };
+      const client = {
+        x: rect.left + ((p.x - view.left) / view.size) * rect.width,
+        y: rect.top + ((p.y - view.top) / view.size) * rect.height,
+      };
+      const restored = mapPoint(client, rect, view);
+      assert.ok(Math.hypot(restored.x - p.x, restored.y - p.y) < 1e-10);
+    }
+    const xs = boundary.map((p) => p.x),
+      ys = boundary.map((p) => p.y);
+    assert.ok(
+      Math.max(
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...ys) - Math.min(...ys),
+      ) /
+        view.size >
+        0.94,
+    );
+  }
+});
