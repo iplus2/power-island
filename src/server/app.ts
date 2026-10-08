@@ -5,6 +5,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { Server, Socket } from "socket.io";
 import { Engine } from "./engine";
 import { CONFIG } from "../shared/config";
+import { TUTORIAL } from "../shared/tutorial";
 import type { Command, Mode, Reply, StatePacket } from "../shared/types";
 
 export function createGameServer() {
@@ -147,7 +148,11 @@ export function createGameServer() {
         sessions.delete(id);
       }
     }
-    if (!engine.match.players.length) rooms.delete(engine.match.code);
+    if (
+      !engine.match.players.length ||
+      (engine.tutorial && !engine.player(engine.tutorial.playerId))
+    )
+      rooms.delete(engine.match.code);
   }
   function bind(socket: Socket, code: string, id: string, token: string) {
     sessions.set(id, { code, token, socketId: socket.id });
@@ -174,6 +179,7 @@ export function createGameServer() {
           code?: unknown;
           mode?: unknown;
           create?: unknown;
+          tutorial?: unknown;
         };
         const name =
           typeof data?.name === "string" ? data.name.trim().slice(0, 18) : "";
@@ -188,14 +194,28 @@ export function createGameServer() {
           do {
             code = randomBytes(3).toString("hex").toUpperCase();
           } while (rooms.has(code));
-          const mode: Mode = data.mode === "2v2" ? "2v2" : "1v1";
-          rooms.set(code, new Engine(code, mode));
+          const mode: Mode =
+            data.tutorial === true
+              ? "1v1"
+              : data.mode === "2v2"
+                ? "2v2"
+                : "1v1";
+          rooms.set(
+            code,
+            new Engine(
+              code,
+              mode,
+              data.tutorial === true ? TUTORIAL.seed : undefined,
+            ),
+          );
         }
         const engine = rooms.get(code);
         if (!engine) throw new Error("Room not found. Check the code.");
         const id = randomUUID(),
           token = randomBytes(32).toString("hex");
         engine.addPlayer(id, name);
+        if (data.create === true && data.tutorial === true)
+          engine.setupTutorial(id);
         bind(socket, code, id, token);
         ack({ ok: true, code, playerId: id, token });
         publish(engine);

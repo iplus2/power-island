@@ -57,6 +57,18 @@ export type PlayerView = Omit<
   Player,
   "zone" | "order" | "placementAt" | "disconnectedAt"
 >;
+export type TutorialStage =
+  | "place"
+  | "withdraw"
+  | "firstPlant"
+  | "frontier"
+  | "expand"
+  | "core"
+  | "complete";
+export type TutorialView = {
+  stage: TutorialStage;
+  markers: (Point & { label: string })[];
+};
 export type Snapshot = {
   code: string;
   mode: Mode;
@@ -76,6 +88,7 @@ export type Snapshot = {
   targetId?: string;
   result?: Result;
   notice?: string;
+  tutorial?: TutorialView;
 };
 export type Reply = {
   ok: boolean;

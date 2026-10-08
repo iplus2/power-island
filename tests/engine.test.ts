@@ -122,22 +122,23 @@ test("Strict thresholds, ceil costs, defeat respawns and cancels Sprint", () => 
   b.power = 51;
   assert.equal(attackCost(b), 26);
 });
-test("Plant capture costs 60%, resets to zero, failed attacks change nothing", () => {
+test("Plant capture costs 50% rounded up, starts at one without extra cost, failed attacks change nothing", () => {
   const e = game(),
     p = e.match.players[0],
     b = building(e, "plant", 50);
   p.x = p.y = 100;
-  p.power = 30;
+  assert.equal(attackCost({ kind: "plant", power: 51 }), 26);
+  p.power = 25;
   act(e, p.id, b.id, "attack");
   e.step(0);
-  assert.equal(p.power, 30);
+  assert.equal(p.power, 25);
   assert.equal(b.power, 50);
   assert.equal(b.teamId, null);
-  p.power = 31;
+  p.power = 26;
   act(e, p.id, b.id, "attack");
   e.step(200);
   assert.equal(p.power, 1);
-  assert.equal(b.power, 0);
+  assert.equal(b.power, 1);
   assert.equal(b.teamId, 0);
 });
 test("Only owned buildings produce; capture does not reset the tick schedule", () => {
@@ -150,10 +151,10 @@ test("Only owned buildings produce; capture does not reset the tick schedule", (
   assert.equal(b.power, 20);
   act(e, p.id, b.id, "attack");
   e.step(1800);
-  assert.equal(b.power, 0);
+  assert.equal(b.power, 1);
   assert.equal(b.productionTick, 10);
   for (let i = 0; i < 10; i++) e.step(2000 + i * 200);
-  assert.equal(b.power, 1);
+  assert.equal(b.power, 2);
   const core = e.match.buildings.find((t) => t.id === p.coreId)!;
   for (let i = 0; i < 30; i++) e.step(4000 + i * 200);
   assert.equal(core.power, 51);
@@ -399,7 +400,7 @@ test("Two attacks cannot pay for the same player defeat or Core destruction twic
   assert.equal(b.power, 100);
   assert.equal(c.alive, false);
 });
-test("Failed zero/positive-cost building attacks preserve state and captured zero buildings remain capturable", () => {
+test("Zero-cost Fort capture grants one Power; recapture requires strictly more than one", () => {
   const e = game(),
     p = e.match.players[0],
     t = building(e, "fort", 0, 1);
@@ -408,7 +409,20 @@ test("Failed zero/positive-cost building attacks preserve state and captured zer
   e.step(0);
   assert.equal(p.power, 1);
   assert.equal(t.teamId, 0);
-  assert.equal(t.power, 0);
+  assert.equal(t.power, 1);
+  const enemy = e.match.players[1];
+  enemy.x = enemy.y = 100;
+  act(e, enemy.id, t.id, "attack");
+  e.step(200);
+  assert.equal(enemy.power, 1);
+  assert.equal(t.teamId, 0);
+  assert.equal(t.power, 1);
+  enemy.power = 2;
+  act(e, enemy.id, t.id, "attack");
+  e.step(400);
+  assert.equal(enemy.power, 1);
+  assert.equal(t.teamId, 1);
+  assert.equal(t.power, 1);
 });
 
 test("Random neutral reserves are seeded integers and remain finite economic targets", () => {
@@ -453,15 +467,15 @@ test("Neutral buildings never produce or bank Power; owned schedules continue ac
   for (let i = 0; i < 99; i++) e.step(i * 200);
   assert.equal(t.power, 10);
   assert.equal(t.productionTick, 99);
-  // At due tick 100 it is still neutral during production, then capture resets storage.
+  // At due tick 100 it is still neutral during production; capture grants one Power.
   act(e, a.id, t.id, "attack");
   e.step(19_800);
-  assert.equal(t.power, 0);
+  assert.equal(t.power, 1);
   assert.equal(t.productionTick, 100);
   for (let i = 0; i < 9; i++) e.step(20_000 + i * 200);
-  assert.equal(t.power, 0);
-  e.step(21_800);
   assert.equal(t.power, 1);
+  e.step(21_800);
+  assert.equal(t.power, 2);
   e.surrender(a.id);
   e.step(22_000);
   assert.equal(t.teamId, 0);

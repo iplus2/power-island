@@ -12,6 +12,7 @@ import {
 } from "../shared/types";
 import { InteractionGesture } from "./gesture";
 import { World } from "./World";
+import { tutorialGuide } from "./tutorialGuide";
 const defaultSocket = io(import.meta.env?.VITE_SERVER_URL || undefined, {
   autoConnect: false,
 });
@@ -50,68 +51,57 @@ function Rules({ close }: { close: () => void }) {
           <article>
             <b>01 / Establish</b>
             <p>
-              Click once to select a spot, then click the selected spot again to
-              confirm your Core within 30 seconds. You spawn there with 1 Power;
-              your Core starts with 50.
+              Click or tap in your zone to choose a Core position, then select
+              the same spot again to confirm. Protect your Core to stay in the
+              game.
             </p>
           </article>
           <article>
             <b>02 / Transport</b>
             <p>
-              Move near a friendly building. Tap <kbd>E</kbd> to take half,
-              double tap to take the maximum, or hold to deposit. Players retain
-              1; withdrawals leave 40 in a Core and 1 in a Plant or Fort.
+              Near a friendly building, press <kbd>E</kbd> or tap Interact to
+              withdraw half; double press or tap for the maximum; hold to
+              deposit. Core withdrawals leave 40 Power for defense.
             </p>
           </article>
           <article>
             <b>03 / Explore</b>
             <p>
-              Neutral buildings do not produce Power. They start with random
-              Power (prototype: {CONFIG.neutralInitialPowerMin}–
-              {CONFIG.neutralInitialPowerMax}). Capture a low-Power Plant first.
-              Owned Plants produce 1 every{" "}
-              {(CONFIG.plantProductionTicks * CONFIG.tickMs) / 1000} seconds;
-              owned Cores and Forts every{" "}
-              {(CONFIG.otherProductionTicks * CONFIG.tickMs) / 1000} seconds.
-              Your team shares current vision. Hidden locations leave no memory.
+              Explore the fog and capture buildings to grow your Power. Only
+              owned buildings produce; Plants produce fastest. Your team shares
+              buildings and current vision.
             </p>
           </article>
           <article>
             <b>04 / Fight</b>
             <p>
-              <kbd>E</kbd> attacks the highlighted enemy. You must carry more
-              Power than an enemy player; victory costs half their Power,
-              rounded up. They respawn with 1.
+              Press <kbd>E</kbd> or tap Interact to attack the highlighted
+              enemy. Carry more Power than an enemy player to defeat them; the
+              attack costs half their Power. Defeated players respawn at their
+              Core.
             </p>
           </article>
           <article>
             <b>05 / Capture</b>
             <p>
-              Plant cost = 60% of stored Power, rounded up. Fort and Core cost =
-              full storage. Carry strictly more than the cost. Captures start at
-              0; Cores are destroyed.
+              Attacking a Plant costs half its Power; a Fort or Core costs its
+              full Power. Carry more than the cost. Plants and Forts become
+              yours; enemy Cores are destroyed.
             </p>
           </article>
           <article>
             <b>06 / Sprint</b>
             <p>
-              Press <kbd>Q</kbd> with more than 10 Power. Spend 10 for 1 second
-              at 1.5× speed. Cannot stack. Teammates cannot be attacked. No
-              dropped loot.
+              Press <kbd>Q</kbd> or tap Sprint for a short speed boost. You need
+              more than 10 Power, and sprinting spends 10.
             </p>
           </article>
         </div>
         <p className="rule-note">
-          Desktop: WASD to move, E to interact, Q to sprint. Phone: tap the map
-          to move + two buttons. The nearest eligible visible target within 8
-          units is highlighted. A locked target leaving range cancels the
-          action. Standing still is safe. Disconnects allow 30 seconds to
-          reconnect; Leave immediately removes your seat; surrender keeps you in
-          the room. Refresh or a network loss allows 30 seconds with this tab’s
-          anonymous session. A new page without credentials cannot recover your
-          identity. Browser session restoration may retain credentials; server
-          restarts erase them. If both teams lose their final Core in one tick,
-          post-cost total Power decides; equal totals draw.
+          Move with WASD or click / tap the map. Get close to a target to
+          interact. Keep exploring, bring Power home, and destroy every enemy
+          Core to win. Disconnected players have 30 seconds to reconnect; the
+          countdown shows time remaining.
         </p>
         <button className="primary" onClick={close}>
           Got it. Let's play ↗
@@ -131,6 +121,7 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
     [rules, setRules] = useState(false),
     [busy, setBusy] = useState(false),
     [copied, setCopied] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
   const suspended = useRef(false);
   suspended.current = rules;
   const stateRef = useRef(state),
@@ -294,6 +285,13 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
     if (state?.phase !== "playing") stop();
   }, [state?.phase, stop]);
   useEffect(() => {
+    if (state?.phase === "finished")
+      resultRef.current?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "center",
+      });
+  }, [state?.phase]);
+  useEffect(() => {
     if (rules) stop();
   }, [rules, stop]);
   function call(event: string, payload?: unknown) {
@@ -316,12 +314,19 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
           err ? (setBusy(false), setError("Request timed out.")) : ack(r),
         );
   }
-  function join(create: boolean) {
+  function join(create: boolean, tutorial = false) {
     setBusy(true);
     setError("");
-    socket
-      .timeout(5000)
-      .emit("join", { create, name, code, mode }, (err: unknown, r: Reply) => {
+    socket.timeout(5000).emit(
+      "join",
+      {
+        create,
+        name: tutorial ? name.trim() || "Explorer" : name,
+        code,
+        mode,
+        tutorial,
+      },
+      (err: unknown, r: Reply) => {
         setBusy(false);
         if (err) {
           setError("Request timed out.");
@@ -333,7 +338,8 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
             JSON.stringify({ playerId: r.playerId, token: r.token }),
           );
         else setError(r.error ?? "Unable to join.");
-      });
+      },
+    );
   }
   function leave() {
     stop();
@@ -481,6 +487,13 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
             >
               Create a room <span>↗</span>
             </button>
+            <button
+              className="secondary tutorial-start"
+              disabled={!connected || busy}
+              onClick={() => join(true, true)}
+            >
+              Play tutorial ↗
+            </button>
             <div className="divider">
               <span>OR JOIN FRIENDS</span>
             </div>
@@ -520,7 +533,8 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
           <div className="match-heading">
             <div>
               <span className="eyebrow">
-                {state.mode} / {state.phase.toUpperCase()}
+                {state.tutorial ? "TUTORIAL" : state.mode} /{" "}
+                {state.phase.toUpperCase()}
               </span>
               <h1>
                 {state.phase === "lobby"
@@ -528,32 +542,40 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                   : state.phase === "placement"
                     ? "Choose your ground."
                     : state.phase === "finished"
-                      ? state.result?.winner === null
-                        ? "A perfect draw."
-                        : `${teamNames[state.result?.winner ?? 0]} team wins.`
+                      ? state.tutorial
+                        ? state.result?.winner === rosterSelf?.teamId
+                          ? "Tutorial complete."
+                          : "Try another approach."
+                        : state.result?.winner === null
+                          ? "A perfect draw."
+                          : `${teamNames[state.result?.winner ?? 0]} team wins.`
                       : rosterSelf?.alive
                         ? "Hold your ground."
                         : "Your teammate carries on."}
               </h1>
             </div>
-            <button
-              className="room-badge"
-              onClick={() => {
-                void navigator.clipboard
-                  ?.writeText(state.code)
-                  .then(() => {
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1600);
-                  })
-                  .catch(() =>
-                    setError("Copy unavailable. Share the code shown above."),
-                  );
-              }}
-              aria-label="Copy room code"
-            >
-              <small>{copied ? "COPIED" : "ROOM CODE"}</small>
-              {state.code} <span>⧉</span>
-            </button>
+            {state.tutorial ? (
+              <span className="tag">SOLO PRACTICE</span>
+            ) : (
+              <button
+                className="room-badge"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(state.code)
+                    .then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1600);
+                    })
+                    .catch(() =>
+                      setError("Copy unavailable. Share the code shown above."),
+                    );
+                }}
+                aria-label="Copy room code"
+              >
+                <small>{copied ? "COPIED" : "ROOM CODE"}</small>
+                {state.code} <span>⧉</span>
+              </button>
+            )}
           </div>
           {state.phase === "lobby" ? (
             <section className="lobby">
@@ -705,6 +727,18 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
             </section>
           ) : (
             <div className="play-layout">
+              {state.tutorial && state.phase !== "finished" && (
+                <div className="tutorial-card" aria-live="polite">
+                  <span className="eyebrow">FIELD TRAINING</span>
+                  <h2>{tutorialGuide[state.tutorial.stage].title}</h2>
+                  <p>{tutorialGuide[state.tutorial.stage].body}</p>
+                  <small>
+                    Markers are suggestions, even through fog. Explore freely.
+                    The practice opponent will not move or attack. Destroy its
+                    Core at any time to finish.
+                  </small>
+                </div>
+              )}
               <section className="board">
                 <World
                   state={state}
@@ -717,6 +751,72 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                   }}
                   onInvalid={setError}
                 />
+                {state.phase === "finished" && (
+                  <div className="match-result-layer" ref={resultRef}>
+                    <section
+                      className="match-result-card"
+                      aria-label="Match result"
+                      aria-live="assertive"
+                    >
+                      <span className="eyebrow">
+                        {state.tutorial ? "FIELD TRAINING" : "MATCH FINISHED"}
+                      </span>
+                      <h2>
+                        {state.tutorial
+                          ? state.result?.winner === rosterSelf?.teamId
+                            ? "Tutorial complete"
+                            : "Practice ended"
+                          : state.result?.winner === null
+                            ? "Draw"
+                            : state.result?.winner === rosterSelf?.teamId
+                              ? "Victory"
+                              : "Defeat"}
+                      </h2>
+                      <p className="result-outcome">
+                        {state.tutorial
+                          ? state.result?.winner === rosterSelf?.teamId
+                            ? "Ready to meet a real opponent?"
+                            : "Restart and try another approach."
+                          : state.result?.winner === null
+                            ? "Both teams share the result."
+                            : `${teamNames[state.result?.winner ?? 0]} wins the island.`}
+                      </p>
+                      <p>
+                        {state.result?.reason.startsWith("Both")
+                          ? state.result.reason
+                          : state.result?.winner === rosterSelf?.teamId
+                            ? "All enemy Cores are gone."
+                            : state.tutorial
+                              ? "Your Core was lost."
+                              : "Your team has no surviving Core."}
+                      </p>
+                      {state.result?.reason.startsWith("Both") && (
+                        <p>
+                          Mint {state.result.totals[0]} · Coral{" "}
+                          {state.result.totals[1]} Power
+                        </p>
+                      )}
+                      <button
+                        className="primary"
+                        disabled={
+                          busy ||
+                          state.hostId !== state.selfId ||
+                          state.roster.some((p) => !p.connected)
+                        }
+                        onClick={() => call("rematch")}
+                      >
+                        {state.hostId === state.selfId
+                          ? state.tutorial
+                            ? "Restart tutorial ↗"
+                            : "Rematch · new island ↗"
+                          : "Waiting for host to rematch"}
+                      </button>
+                      <button className="text-button leave" onClick={leave}>
+                        Back to Home
+                      </button>
+                    </section>
+                  </div>
+                )}
                 {!connected && (
                   <div className="board-status">
                     Connection lost. Reconnecting with this tab’s session for up
@@ -842,33 +942,6 @@ export function App({ connection = defaultSocket }: { connection?: Socket }) {
                       </div>
                     </div>
                   </>
-                )}
-                {state.phase === "finished" && (
-                  <div className="result">
-                    <p>{state.result?.reason}</p>
-                    {state.result?.reason.startsWith("Both") && (
-                      <p>
-                        Mint {state.result.totals[0]} · Coral{" "}
-                        {state.result.totals[1]} Power
-                      </p>
-                    )}
-                    <button
-                      className="primary"
-                      disabled={
-                        busy ||
-                        state.hostId !== state.selfId ||
-                        state.roster.some((p) => !p.connected)
-                      }
-                      onClick={() => call("rematch")}
-                    >
-                      {state.hostId === state.selfId
-                        ? "Rematch · new island ↗"
-                        : "Waiting for host to rematch"}
-                    </button>
-                    <button className="text-button leave" onClick={leave}>
-                      Back to Home
-                    </button>
-                  </div>
                 )}
                 {state.phase !== "finished" && rosterSelf?.alive && (
                   <button className="text-button leave" onClick={leave}>

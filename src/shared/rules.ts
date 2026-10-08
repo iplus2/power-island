@@ -6,7 +6,7 @@ export function attackCost(
 ) {
   return Math.ceil(
     target.power *
-      ("kind" in target ? (target.kind === "plant" ? 0.6 : 1) : 0.5),
+      ("kind" in target ? (target.kind === "plant" ? 0.5 : 1) : 0.5),
   );
 }
 export function transfer(player: Player, building: Building, kind: Command) {

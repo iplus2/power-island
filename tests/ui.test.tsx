@@ -166,7 +166,7 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
     assert.ok(p.sprintTicks > 0);
     fireEvent.click(view.getByText("How to play ↗"));
     assert.ok(view.getByRole("dialog"));
-    assert.ok(view.getByText(/Neutral buildings do not produce Power/));
+    assert.ok(view.getByText(/Only owned buildings produce/));
     fireEvent.click(view.getByLabelText("Close guide"));
     fireEvent.click(view.getByText("Surrender your Core"));
     await waitFor(() => assert.ok(view.getByText("Coral team wins.")));

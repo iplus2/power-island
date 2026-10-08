@@ -1,6 +1,6 @@
 # Core Game Specification
 
-**Version:** 0.6 — synchronization, touch movement, reconnect lifecycle and coastline fit. Updated October 3, 2026.
+**Version:** 0.8 — free-form tutorial and prominent map results. Updated October 7, 2026.
 **First-release modes:** 1v1 and 2v2  
 **Status:** Current implemented rules; device and stability acceptance is tracked in outputs/development_status.md.
 
@@ -93,7 +93,7 @@ deposit x:  player P → P − x; building B → B + x
 
 The Core reserve does not alter the initial half calculation; it caps the actual transfer. **Core 50: half requests 25, transfers only 10, leaves 40. Core 100: half transfers 50, leaves 50.** Odd half withdrawals round downward, leaving the larger half stored.
 
-Never withdraw an amount and then create Power to restore the reserve. A captured Plant/Fort starts at 0 and cannot be withdrawn from until it has sufficient Power. A Core below its reserve is not automatically topped up. Withdrawal never destroys a Core. Enemy attacks destroy Cores; surrender/timeout retirement is separate elimination cleanup, as described in section 12.
+Never withdraw an amount and then create Power to restore the reserve. A captured Plant/Fort starts at 1 and cannot be withdrawn from until it has Power above its reserve. A Core below its reserve is not automatically topped up. Withdrawal never destroys a Core. Enemy attacks destroy Cores; surrender/timeout retirement is separate elimination cleanup, as described in section 12.
 
 ## 7. Movement & Confirmed Sprint
 
@@ -131,7 +131,7 @@ Implementation choices: break equal-distance target ties by stable entity ID; lo
 | Target | Defense coefficient |
 |---|---|
 | Enemy player | **0.5** |
-| Power Plant | **0.6** |
+| Power Plant | **0.5** |
 | Fort | **1.0** |
 | Core | **1.0** |
 
@@ -144,10 +144,10 @@ attackerPowerAfter = attackerPowerBefore − attackCost
 
 The player coefficient changes the victory cost only, not the strength threshold. All comparisons are strict. Failed attacks leave Power, ownership and gameplay state unchanged.
 
-Examples: player 51 defeats player 50, pays 25 and retains 26; player 50 cannot defeat player 50. Plant 50 costs 30 and requires at least 31. Fort/Core 50 costs 50 and requires at least 51.
+Examples: player 51 defeats player 50, pays 25 and retains 26; player 50 cannot defeat player 50. Plant 50 costs 25 and requires at least 26. Fort/Core 50 costs 50 and requires at least 51.
 
 **Player defeat:** deduct attacker cost, reset defender to 1 and respawn at their surviving Core; no loot or Power transfer to the attacker.  
-**Plant/Fort capture:** deduct cost, transfer to attacker's team, set stored Power to **0**.  
+**Plant/Fort capture:** deduct cost, transfer to attacker's team, set stored Power to **1**. This grants 1 Power immediately at no extra attack cost; it does not reset the production schedule.
 **Core attack:** deduct cost, destroy the Core and eliminate its owner at tick-end settlement. Core is never captured.
 
 ## 11. Tick Ordering & Concurrent Actions
@@ -199,7 +199,7 @@ Show the full island fitted to the available map frame. Map taps act on release,
 
 Only during `playing`, prevent selection and unnecessary text editing in the game interface. Lobby, placement, results and Home restore normal selection/form use. Preserve WASDEQ, room entry inputs and webpage scrolling/zooming. Canvas backing pixels follow devicePixelRatio and native page zoom; drawing and tapping use the same coast-fitted transform. Font design/layout are unchanged.
 
-All player-facing UI, rules, hints and feedback are **English only**. Provide Home, Lobby, room-code joining, HUD, How to Play, Game Over and Rematch. Explain teams, individual Cores, victory/draw, Power/speed, strict attacks, reserves, fog, sprint and surrender. Show target highlighting and sprint availability.
+All player-facing UI, rules, hints and feedback are **English only**. Provide Home, Lobby, room-code joining, HUD, How to Play, Game Over and Rematch. Explain teams, individual Cores, victory/draw, Power/speed, strict attacks, reserves, fog, sprint and surrender. Show target highlighting and sprint availability. At match end, show a prominent result panel centered over the map with victory/defeat/draw, the outcome reason, and rematch/Home controls. Tutorial results use completion/retry wording. Scroll the result into view when needed on mobile.
 
 ## 15. Technical Direction & Configuration
 
@@ -213,14 +213,26 @@ Centralize these provisional defaults for easy playtest changes:
 | Interaction radius | 8 units |
 | Player starting / respawn Power; player reserve | 1 / 1; 1 |
 | Core starting Power; withdrawal reserve | 50; 40 |
-| Plant/Fort withdrawal reserve; captured Power | 1; 0 |
+| Plant/Fort withdrawal reserve; captured Power | 1; 1 |
 | Plant / Fort / Core production interval | 10 / 50 / 50 ticks, each producing 1 |
 | Sprint cost / multiplier / duration | 10 / 1.5 / 1 second |
 | Reconnection / placement inactivity window | 30 seconds |
 
 Also configure base/minimum speed, speed curve, vision radii, initial neutral-building Power, counts/spacing, map parameters, spawn layout and input timing. Values remain tunable; do not invent resource caps or additional mechanics.
 
-## 16. Delivery and Scope
+## 16. Solo Tutorial
+
+The Home page offers solo practice using the normal authoritative **1v1** engine on fixed **seed 175**. A connected, stationary practice opponent takes no movement or interaction actions. The learner deploys anywhere valid in the left half; the map suggests a Core position at `(45, 100)`, to the left of the Plant at approximately `(60, 100)`. Placement still uses two confirmations and the normal timeout. Initial player/Core Power and withdrawal reserves remain the competitive defaults.
+
+Scenario setup places the opponent Core at `(145, 150)` with **100 Power** and assigns the Plant to its left at approximately `(108, 142)` (`b4`) to the opponent with **1 initial Power**. Other generated buildings keep their seeded positions and initial Power. The opponent's assets produce normally. Transfers, costs, strict thresholds, capture grants, movement, fog, respawn and victory are unchanged; no extra resources, invulnerability, scripted attacks or forced action order are added.
+
+Text guidance progresses from placement → withdrawal → first Plant capture → finding the enemy Core and capturing a second Plant → expanding production and storing Power in a Fort → destroying the enemy Core. Any Plant capture qualifies, including enemy Plants; progression counts distinct captured Plants. Capturing any Fort advances to the final attack guidance, even if earlier suggestions were skipped. Destroying the opponent Core at any stage completes practice; surrender and timeout use ordinary defeat settlement.
+
+Tutorial-only annotations identify suggested positions even through fog. They carry coordinates and labels, not hidden Power or a full hidden-entity collection. Normal visibility and attack-range checks still apply, and competitive matches receive no tutorial annotations. The guide explains that equal stored Power costs twice as much to attack in a Fort as in a Plant; Forts do not automatically attack or shield nearby players.
+
+Restarting practice resets the same seed and scenario. It is a private room with one real session; leaving or session timeout removes the room and its stationary opponent. The human remains the tutorial host upon reconnect. Practice does not introduce a third competitive game mode.
+
+## 17. Delivery and Scope
 
 Players join anonymous browser rooms without installation. The frontend and authoritative backend must be reachable for remote play. Real-device, multi-network and novice-comprehension acceptance remains tracked in outputs/development_status.md.
 

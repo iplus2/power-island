@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173` in separate tabs for each player. The backend uses port 3001.
+Open `http://localhost:5173` in separate tabs for each player. The backend uses port 3001. Home also offers **Play tutorial**, a solo practice match on a fixed island with a stationary opponent and optional map guidance.
 
 ```sh
 npm run check
@@ -35,7 +35,7 @@ Stop development services after testing. External deployment validation is manua
 
 ## Project guide
 
-- [Game rules](core_game_spec.md): the single current specification, v0.6.
+- [Game rules](core_game_spec.md): the single current specification, v0.8.
 - [Collaboration guide](AGENTS.md): implementation and verification conventions.
 - [Documentation index](outputs/README.md): current status and evidence.
 

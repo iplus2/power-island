@@ -366,6 +366,32 @@ export function World({
         ctx.restore();
       }
       ctx.restore();
+      // Tutorial annotations reveal suggested positions only, never hidden Power
+      // or entities. Draw after fog so they remain useful while exploring.
+      for (const [i, marker] of (s.tutorial?.markers ?? []).entries()) {
+        ctx.strokeStyle = "#ffe49a";
+        ctx.lineWidth = 0.45;
+        ctx.setLineDash([1, 0.8]);
+        ctx.beginPath();
+        ctx.arc(marker.x, marker.y, 4.4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const fontSize = Math.max(2.5, (10 * dpr) / scale);
+        ctx.font = `bold ${fontSize}px system-ui`;
+        ctx.textAlign = "center";
+        const y =
+          marker.y + (marker.label === "Enemy Core" ? 10 : i % 2 ? 8 : -7);
+        const width = ctx.measureText(marker.label).width + 3;
+        ctx.fillStyle = "#08171ef2";
+        ctx.fillRect(
+          marker.x - width / 2,
+          y - fontSize - 0.5,
+          width,
+          fontSize + 1.5,
+        );
+        ctx.fillStyle = "#ffe49a";
+        ctx.fillText(marker.label, marker.x, y);
+      }
       // Map compass is presentation only, not an extra control.
       ctx.fillStyle = "#83a0a6";
       ctx.font = "2.5px system-ui";

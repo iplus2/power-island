@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CONFIG, normalSpeed } from "../shared/config";
+import { TUTORIAL } from "../shared/tutorial";
 import {
   constrainMove,
   distance,
@@ -25,13 +26,142 @@ import type {
   Player,
   Snapshot,
   TeamId,
+  TutorialView,
 } from "../shared/types";
 
 export class Engine {
   match: Match;
   hostId?: string;
   mapVersion = randomUUID();
+  tutorial?: {
+    playerId: string;
+    opponentId: string;
+    enemyPlantId: string;
+    withdrew: boolean;
+    plants: Set<string>;
+    forts: Set<string>;
+  };
+  setupTutorial(playerId: string, now = Date.now()) {
+    if (
+      this.match.mode !== "1v1" ||
+      this.match.seed !== TUTORIAL.seed ||
+      this.match.players.length !== 1 ||
+      !this.player(playerId)
+    )
+      throw new Error("Invalid tutorial setup.");
+    const opponentId = `practice-${playerId}`;
+    this.addPlayer(opponentId, "Practice opponent", now);
+    this.start(now);
+    this.player(playerId)!.zone = 0;
+    this.player(opponentId)!.zone = 1;
+    this.place(opponentId, TUTORIAL.enemyCore.x, TUTORIAL.enemyCore.y);
+    this.match.buildings.find(
+      (b) => b.id === this.player(opponentId)!.coreId,
+    )!.power = TUTORIAL.enemyCorePower;
+    const plant = this.match.buildings.find(
+      (b) => b.id === TUTORIAL.enemyPlant,
+    )!;
+    plant.teamId = this.player(opponentId)!.teamId;
+    plant.power = TUTORIAL.enemyPlantPower;
+    this.tutorial = {
+      playerId,
+      opponentId,
+      enemyPlantId: plant.id,
+      withdrew: false,
+      plants: new Set(),
+      forts: new Set(),
+    };
+  }
+  private tutorialView(): TutorialView | undefined {
+    const t = this.tutorial;
+    if (!t) return;
+    const m = this.match,
+      p = this.player(t.playerId);
+    const marker = (point: { x: number; y: number }, label: string) => ({
+      x: point.x,
+      y: point.y,
+      label,
+    });
+    const core = m.buildings.find(
+      (b) => b.id === this.player(t.opponentId)?.coreId,
+    );
+    if (m.phase === "finished") return { stage: "complete", markers: [] };
+    if (m.phase === "placement")
+      return {
+        stage: "place",
+        markers: [
+          marker(TUTORIAL.suggestedCore, "Suggested Core"),
+          marker(
+            m.buildings.find((b) => b.id === TUTORIAL.firstPlant)!,
+            "First Plant",
+          ),
+        ],
+      };
+    if (t.forts.size)
+      return {
+        stage: "core",
+        markers: core ? [marker(core, "Enemy Core")] : [],
+      };
+    if (t.plants.size >= 2) {
+      const plants = m.buildings
+        .filter((b) => b.kind === "plant" && b.teamId !== p?.teamId)
+        .sort(
+          (a, b) =>
+            distance(a, TUTORIAL.enemyCore) - distance(b, TUTORIAL.enemyCore),
+        )
+        .slice(0, 2);
+      const fort = m.buildings
+        .filter((b) => b.kind === "fort" && b.teamId !== p?.teamId)
+        .sort(
+          (a, b) =>
+            distance(a, TUTORIAL.enemyCore) - distance(b, TUTORIAL.enemyCore),
+        )[0];
+      return {
+        stage: "expand",
+        markers: [
+          ...plants.map((b) => marker(b, "Plant")),
+          ...(fort ? [marker(fort, "Fort / Store Power")] : []),
+        ],
+      };
+    }
+    if (t.plants.size === 1) {
+      const plant =
+        m.buildings.find(
+          (b) => b.id === t.enemyPlantId && b.teamId !== p?.teamId,
+        ) ??
+        m.buildings
+          .filter((b) => b.kind === "plant" && b.teamId !== p?.teamId)
+          .sort(
+            (a, b) =>
+              distance(a, TUTORIAL.enemyCore) - distance(b, TUTORIAL.enemyCore),
+          )[0];
+      return {
+        stage: "frontier",
+        markers: [
+          ...(core ? [marker(core, "Enemy Core")] : []),
+          ...(plant && plant.teamId !== p?.teamId
+            ? [marker(plant, plant.teamId === null ? "Plant" : "Enemy Plant")]
+            : []),
+        ],
+      };
+    }
+    if (!t.withdrew) {
+      const ownCore = m.buildings.find((b) => b.id === p?.coreId);
+      return {
+        stage: "withdraw",
+        markers: ownCore ? [marker(ownCore, "Withdraw Power")] : [],
+      };
+    }
+    const plant = m.buildings.find((b) => b.id === TUTORIAL.firstPlant)!;
+    return { stage: "firstPlant", markers: [marker(plant, "First Plant")] };
+  }
   ensureHost() {
+    if (this.tutorial) {
+      this.hostId = this.player(this.tutorial.playerId)?.connected
+        ? this.tutorial.playerId
+        : undefined;
+      return;
+    }
     if (this.match.players.some((p) => p.id === this.hostId && p.connected))
       return;
     const candidates = this.match.players.filter((p) => p.connected);
@@ -541,6 +671,12 @@ export class Engine {
       )
         continue;
       const amount = transfer(p, b, a.kind);
+      if (
+        this.tutorial?.playerId === p.id &&
+        a.kind !== "deposit" &&
+        amount > 0
+      )
+        this.tutorial.withdrew = true;
       m.notices[p.id] =
         `${a.kind === "deposit" ? "Deposited" : "Withdrew"} ${amount} Power.`;
     }
@@ -573,7 +709,11 @@ export class Engine {
           m.notices[p.id] = "Enemy Core destroyed.";
         } else {
           target.teamId = p.teamId;
-          target.power = 0;
+          target.power = 1;
+          if (this.tutorial?.playerId === p.id)
+            this.tutorial[target.kind === "plant" ? "plants" : "forts"].add(
+              target.id,
+            );
           m.notices[p.id] =
             `${target.kind === "plant" ? "Power Plant" : "Fort"} captured.`;
         }
@@ -657,6 +797,7 @@ export class Engine {
         m.phase === "playing" && p.alive ? nearest(m, p)?.id : undefined,
       result: m.result,
       notice: m.notices[id],
+      ...(this.tutorial ? { tutorial: this.tutorialView() } : {}),
     };
   }
   rematch() {
@@ -665,6 +806,20 @@ export class Engine {
     if (this.match.players.some((p) => !p.connected))
       throw new Error("All players must reconnect before a rematch.");
     const { code, mode, players } = this.match;
+    if (this.tutorial) {
+      const player = this.player(this.tutorial.playerId)!;
+      const fresh = new Engine(code, "1v1", TUTORIAL.seed);
+      fresh.addPlayer(player.id, player.name);
+      fresh.setupTutorial(player.id);
+      this.match = fresh.match;
+      this.mapVersion = fresh.mapVersion;
+      this.tutorial = fresh.tutorial;
+      this.inputs.clear();
+      this.actions.clear();
+      this.locks.clear();
+      this.retirements.clear();
+      return;
+    }
     let seed = Math.floor(Math.random() * 0xffffffff);
     if (seed === this.match.seed) seed = (seed + 1) >>> 0;
     const fresh = new Engine(code, mode, seed);

@@ -501,3 +501,110 @@ test("Touch 1v1: canceled placement gestures, straight destinations, DPR3/zoom, 
     await Promise.all(contexts.map((c) => c.close().catch(() => {})));
   }
 });
+
+test("Tutorial: free placement, normal first capture, fog markers, resume and result overlay", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 960 },
+  });
+  const page = await context.newPage();
+  let snapshot: Snapshot | undefined;
+  page.on("websocket", (ws) =>
+    ws.on("framereceived", ({ payload }) => {
+      const text = String(payload);
+      if (text.startsWith('42["state",'))
+        snapshot =
+          restoreSnapshot(
+            JSON.parse(text.slice(2))[1] as StatePacket,
+            snapshot,
+          ) ?? snapshot;
+    }),
+  );
+  async function move(x: number, y: number) {
+    const canvas = page.locator("canvas");
+    await canvas.scrollIntoViewIfNeeded();
+    const rect = (await canvas.boundingBox())!;
+    const view = await canvas.evaluate((el) => ({
+      left: Number(el.getAttribute("data-map-left")),
+      top: Number(el.getAttribute("data-map-top")),
+      size: Number(el.getAttribute("data-map-size")),
+    }));
+    await canvas.click({
+      position: {
+        x: ((x - view.left) / view.size) * rect.width,
+        y: ((y - view.top) / view.size) * rect.height,
+      },
+    });
+  }
+  try {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Play tutorial" }).click();
+    await expect(
+      page.getByText("Establish your Core", { exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => snapshot?.tutorial?.stage).toBe("place");
+    expect(snapshot!.buildings.every((b) => b.power === undefined)).toBe(true);
+    await move(40, 100);
+    await move(40, 100); // Off the suggestion, but legal.
+    await expect(
+      page.getByText("Take Power with you", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("e");
+    await expect(
+      page.getByText("Capture your first Plant", { exact: true }),
+    ).toBeVisible();
+    await move(60.44303983449936, 99.51075091958046);
+    await expect.poll(() => snapshot?.targetId).toBe("b0");
+    await page.keyboard.press("e");
+    await expect(
+      page.getByText("Find the enemy Core", { exact: true }),
+    ).toBeVisible();
+    expect(
+      snapshot!.tutorial!.markers.some((m) => m.label === "Enemy Core"),
+    ).toBe(true);
+    expect(
+      snapshot!.buildings.some((b) => b.kind === "core" && b.teamId === 1),
+    ).toBe(false);
+    const version = snapshot!.mapVersion;
+    await page.reload();
+    await expect(
+      page.getByText("Find the enemy Core", { exact: true }),
+    ).toBeVisible();
+    expect(snapshot!.mapVersion).toBe(version);
+    await page.getByRole("button", { name: "Surrender your Core" }).click();
+    const panel = page.getByRole("region", { name: "Match result" });
+    await expect(panel).toBeVisible();
+    await expect(
+      panel.getByRole("heading", { name: "Practice ended" }),
+    ).toBeVisible();
+    await expect
+      .poll(async () => {
+        const r = await panel.boundingBox(),
+          b = await page.locator(".board").boundingBox();
+        return (
+          !!r &&
+          !!b &&
+          r.x >= b.x &&
+          r.y >= b.y &&
+          r.x + r.width <= b.x + b.width &&
+          r.y + r.height <= b.y + b.height
+        );
+      })
+      .toBe(true);
+    await page.screenshot({
+      path: "outputs/screenshots/tutorial-result-desktop.png",
+      fullPage: true,
+    });
+    await panel.getByRole("button", { name: "Restart tutorial" }).click();
+    await expect(
+      page.getByText("Establish your Core", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Leave room immediately" }).click();
+    await expect(
+      page.getByRole("button", { name: "Play tutorial" }),
+    ).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
