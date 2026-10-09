@@ -1,6 +1,6 @@
 # Core Game Specification
 
-**Version:** 0.8 — free-form tutorial and prominent map results. Updated October 7, 2026.
+**Version:** 0.9 — four-part guided tutorial. Updated October 10, 2026.
 **First-release modes:** 1v1 and 2v2  
 **Status:** Current implemented rules; device and stability acceptance is tracked in outputs/development_status.md.
 
@@ -102,13 +102,13 @@ WASD provides free-direction movement; normalize diagonal keyboard input. A map 
 **Q / mobile Sprint button:**
 
 - Require carried Power **> 10** and no active sprint.
-- Deduct **10 Power**, then compute normal speed from the remaining carried Power and multiply by **1.5** for **1 second**.
+- Deduct **10 Power**, then compute normal speed from the remaining carried Power and multiply by **1.5** for **1.6 seconds**.
 - During the sprint, normal speed continues to use current carried Power, with the same 1.5 multiplier.
 - Ignore activation while already sprinting; do not charge again, stack or extend the sprint.
 - Respawn cancels the sprint.
 - At 10 or below, activation does nothing and costs nothing. At 11, it leaves 1.
 
-The authoritative server times the effect; at the prototype tick rate, one second is five ticks. There is no additional cooldown after the sprint expires.
+The authoritative server times the effect; at the prototype tick rate, 1.6 seconds is eight ticks. There is no additional cooldown after the sprint expires.
 
 ## 8. Fog / Vision
 
@@ -199,7 +199,7 @@ Show the full island fitted to the available map frame. Map taps act on release,
 
 Only during `playing`, prevent selection and unnecessary text editing in the game interface. Lobby, placement, results and Home restore normal selection/form use. Preserve WASDEQ, room entry inputs and webpage scrolling/zooming. Canvas backing pixels follow devicePixelRatio and native page zoom; drawing and tapping use the same coast-fitted transform. Font design/layout are unchanged.
 
-All player-facing UI, rules, hints and feedback are **English only**. Provide Home, Lobby, room-code joining, HUD, How to Play, Game Over and Rematch. Explain teams, individual Cores, victory/draw, Power/speed, strict attacks, reserves, fog, sprint and surrender. Show target highlighting and sprint availability. At match end, show a prominent result panel centered over the map with victory/defeat/draw, the outcome reason, and rematch/Home controls. Tutorial results use completion/retry wording. Scroll the result into view when needed on mobile.
+All player-facing UI, rules, hints and feedback are **English only**. Provide Home, Lobby, room-code joining, HUD, How to Play, Game Over and Rematch. Keep How to Play concise: describe placement, transfers, exploration, fighting and sprint controls, with essential Power thresholds and costs. Use plain descriptions rather than distance units, production intervals, exact sprint duration/multiplier or rounding details. Detailed numeric rules remain in this specification. Explain teams, individual Cores, victory/draw, Power/speed, strict attacks, reserves, fog, sprint and surrender in the relevant interface. Show target highlighting and sprint availability. At match end, show a prominent result panel centered over the map with victory/defeat/draw, the outcome reason, and rematch/Home controls. Tutorial results use completion/retry wording. Scroll the result into view when needed on mobile.
 
 ## 15. Technical Direction & Configuration
 
@@ -215,22 +215,35 @@ Centralize these provisional defaults for easy playtest changes:
 | Core starting Power; withdrawal reserve | 50; 40 |
 | Plant/Fort withdrawal reserve; captured Power | 1; 1 |
 | Plant / Fort / Core production interval | 10 / 50 / 50 ticks, each producing 1 |
-| Sprint cost / multiplier / duration | 10 / 1.5 / 1 second |
+| Sprint cost / multiplier / duration | 10 / 1.5 / 1.6 seconds |
 | Reconnection / placement inactivity window | 30 seconds |
 
 Also configure base/minimum speed, speed curve, vision radii, initial neutral-building Power, counts/spacing, map parameters, spawn layout and input timing. Values remain tunable; do not invent resource caps or additional mechanics.
 
 ## 16. Solo Tutorial
 
-The Home page offers solo practice using the normal authoritative **1v1** engine on fixed **seed 175**. A connected, stationary practice opponent takes no movement or interaction actions. The learner deploys anywhere valid in the left half; the map suggests a Core position at `(45, 100)`, to the left of the Plant at approximately `(60, 100)`. Placement still uses two confirmations and the normal timeout. Initial player/Core Power and withdrawal reserves remain the competitive defaults.
+Home's **Play tutorial** button opens a four-part selection dialog. Each part runs a private solo room through the authoritative **1v1** engine on fixed **seed 175**. Competitive rules, 200 ms ticks, normal production, reserves, movement, fog, sprint, attacks and respawn remain unchanged. The practice opponent never attacks; only Part 3 gives it movement intent.
 
-Scenario setup places the opponent Core at `(145, 150)` with **100 Power** and assigns the Plant to its left at approximately `(108, 142)` (`b4`) to the opponent with **1 initial Power**. Other generated buildings keep their seeded positions and initial Power. The opponent's assets produce normally. Transfers, costs, strict thresholds, capture grants, movement, fog, respawn and victory are unchanged; no extra resources, invulnerability, scripted attacks or forced action order are added.
+All parts preserve the generated building positions and neutral initial Power. The old preset enemy ownership of `b4` is removed; that Plant remains at its seeded position with its seeded neutral Power. The enemy Core is at `(145, 150)` with initial **100 Power**. The recommended learner Core is `(45, 100)`; Part 1 keeps normal two-click placement anywhere valid in the left half, and Parts 2–4 deploy it automatically at the recommendation. Player starting Power remains **1**.
 
-Text guidance progresses from placement → withdrawal → first Plant capture → finding the enemy Core and capturing a second Plant → expanding production and storing Power in a Fort → destroying the enemy Core. Any Plant capture qualifies, including enemy Plants; progression counts distinct captured Plants. Capturing any Fort advances to the final attack guidance, even if earlier suggestions were skipped. Destroying the opponent Core at any stage completes practice; surrender and timeout use ordinary defeat settlement.
+| Part | Initial assets | Required sequence |
+|---|---|---|
+| 1 — Core & basic controls | Learner Core 50; all Plants/Forts neutral | Deploy → move away from Core → single half withdrawal → double maximum withdrawal → hold deposit at own Core |
+| 2 — Attack | Learner Core 45; all Plants/Forts neutral | Capture `b0` Plant (Core withdrawal explained in the same hint) → collect supplies and capture `b14` Fort above it |
+| 3 — Chase | Learner Core 100; opponent carries 20; all Plants/Forts neutral | Defeat the moving opponent (Core withdrawal and Sprint explained in the same hint) |
+| 4 — Front line | Learner Core 100; learner owns its nearest three Plants (`b0`, `b11`, `b5`); opponent owns its nearest Plant (`b7`) and Fort (`b12`); all those Plants/Forts start at 1 | Explore light to find enemy Core → capture marked `b7` → capture marked `b12` → destroy enemy Core |
 
-Tutorial-only annotations identify suggested positions even through fog. They carry coordinates and labels, not hidden Power or a full hidden-entity collection. Normal visibility and attack-range checks still apply, and competitive matches receive no tutorial annotations. The guide explains that equal stored Power costs twice as much to attack in a Fort as in a Plant; Forts do not automatically attack or shield nearby players.
+Part 1 movement is recognized beyond one entity diameter from the Core. The single and double gestures count even when reserves cap the transferred amount at zero; the final deposit requires a positive transfer. This preserves all three input lessons under the Core's 40 reserve. Part 2 initially allows withdrawing 5 and carrying **6**: attacking the seeded 10-Power Plant costs **5**. Collection and Fort capture share one step; no Plant withdrawal command is required for progression. The Fort starts at its seeded **12** and requires carrying more than its full stored Power. Normal production continues while the learner waits.
 
-Restarting practice resets the same seed and scenario. It is a private room with one real session; leaving or session timeout removes the room and its stationary opponent. The human remains the tutorial host upon reconnect. Practice does not introduce a third competitive game mode.
+Part 3's opponent uses ordinary movement speed and coastline collision. It flees directly away when closer than a configurable **14** units and approaches directly when farther than **15**, keeping near the learner's 16-unit vision edge during ordinary pursuit. Sprint uses the shared 1.6-second duration and normal 10-Power cost. Sprinting is optional; trapping the opponent at the coastline and defeating it also completes the lesson. No extra resources or teleportation are supplied. Opponent defeat uses the normal cost of half the **opponent's** Power, not half the learner's Power; carrying strictly more than the opponent is still required.
+
+Guidance follows the ordered objectives, while capture tasks inspect **current building ownership**. An already captured target counts when its task is reached, so early captures cannot leave the tutorial waiting for a second capture event. Part 2 finishes when both specified buildings are owned; it does not require a Plant withdrawal event. Parts 2–3 start directly with their first combat objective; taking Core Power is explained within that hint and has no separate stage or check. Part 3 finishes on the opponent's normal defeat, without requiring any sprint history. First-part gestures retain command checks because ownership and stored Power cannot identify a single/double/hold gesture.
+
+There are **no tutorial-specific attack restrictions**. All parts use ordinary target eligibility, attack thresholds, costs and Core victory. Destroying the enemy Core at any stage ends the room with normal victory. Fourth-part exploration guidance asks the learner to leave Power stored and travel light before discovering the enemy Core; this is a hint, not a withdrawal restriction.
+
+Part 4 sends **no tutorial markers** until the enemy Core enters ordinary **team shared vision**, including vision from friendly buildings. Discovery reuses the normal visibility rule, without a separate personal-distance threshold. Discovery restores sequential Plant, Fort and Core guidance. Other parts send only suggested coordinates and labels, never hidden Power or hidden opponent coordinates; normal entity visibility and interaction range still apply. Competitive matches receive no tutorial annotations. Tutorial cards show a title and main instruction without an extra fine-print footer. Fort guidance explains production from Plants, stockpiling Power near the front line, hold-to-deposit, and the doubled capture cost compared with a Plant of equal Power.
+
+After completing Parts 1–3, the map result offers **Next tutorial** or **Back to Home**. Continuing resets the same map and starts the next part in the same authenticated room. Part 4 results offer **Back to Home** only. Failed Parts 1–3 can retry the selected part. Refresh/reconnect preserves part and progress; leaving or session timeout removes the private room and its practice opponent. The human retains tutorial host authority upon reconnect. Tutorial practice does not introduce a third competitive game mode.
 
 ## 17. Delivery and Scope
 

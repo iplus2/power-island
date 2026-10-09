@@ -2,7 +2,7 @@
 
 ## 开始工作
 
-阅读 README.md、core_game_spec.md（唯一当前规则，v0.8）及 outputs/development_status.md；检查 git status，保留已有改动。文档索引见 outputs/README.md。
+阅读 README.md、core_game_spec.md（唯一当前规则，v0.9）及 outputs/development_status.md；检查 git status，保留已有改动。文档索引见 outputs/README.md。
 
 ## 结构与产品约束
 
@@ -23,5 +23,6 @@ Node.js 22+；安装依赖后按变更选择 npm run check、npm test、npm run 
 - 已有发布 checkout 如存在于 .sites/frontend，保留其 .git、站点 manifest 和历史，复用原站点身份；不要当缓存删除。主仓库和发布仓库分别管理。
 - local/ 为不提交的私有操作记录；需要部署时再读其中当前说明。线上地址、身份、连接命令和凭据不写入可提交文件。
 - 提交或推送前检查整个提交树及历史；不提交本地路径、环境配置、截图或个人操作记录。outputs/optimization_backlog.md 仅本地保留。
+- Git 提交和推送只在用户本次明确要求时执行；不要因部署或小幅文字修订自行提交。
 - GitHub 前两次不干净的旧历史已清理。后续检查以当前主分支及待推送提交为准，不重复处理已清理的旧历史或 Codex 本地检查点，也不推送本地检查点引用。
 - 只删除确认可再生成的产物，不对整个仓库清除 ignored 文件。node_modules 无需日常删除。

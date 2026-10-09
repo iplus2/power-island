@@ -14,7 +14,7 @@ export const CONFIG = {
   otherProductionTicks: 50,
   sprintCost: 10,
   sprintMultiplier: 1.5,
-  sprintTicks: 5,
+  sprintTicks: 8,
   timeoutMs: 30_000,
   // Playtest values, not new agreed balance rules:
   baseSpeed: 20,

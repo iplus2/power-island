@@ -73,7 +73,7 @@ test("Core withdrawals conserve integer Power and enforce reserve without replen
   assert.equal(transfer(p, b, "max"), 0);
   assert.equal(b.power, 0);
 });
-test("Sprint requires >10, uses post-cost speed, lasts five ticks, cannot stack", () => {
+test("Sprint requires >10, uses post-cost speed, lasts eight ticks, cannot stack", () => {
   const e = game(),
     p = e.match.players[0];
   p.x = 100;
@@ -88,14 +88,16 @@ test("Sprint requires >10, uses post-cost speed, lasts five ticks, cannot stack"
   e.input(p.id, { x: 1, y: 0, sprint: true }, 200);
   e.step(200);
   assert.equal(p.power, 1);
-  assert.equal(p.sprintTicks, 5);
+  assert.equal(p.sprintTicks, 8);
   assert.equal(p.x, 100 + normalSpeed(1) * 1.5 * 0.2);
   p.power = 30;
   e.input(p.id, { x: 0, y: 0, sprint: true }, 400);
   e.step(400);
   assert.equal(p.power, 30);
-  assert.equal(p.sprintTicks, 4);
-  for (let i = 0; i < 4; i++) e.step(600 + i * 200);
+  assert.equal(p.sprintTicks, 7);
+  for (let i = 0; i < 6; i++) e.step(600 + i * 200);
+  assert.equal(p.sprintTicks, 1);
+  e.step(1800);
   assert.equal(p.sprintTicks, 0);
 });
 test("Strict thresholds, ceil costs, defeat respawns and cancels Sprint", () => {

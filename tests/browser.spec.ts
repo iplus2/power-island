@@ -502,13 +502,7 @@ test("Touch 1v1: canceled placement gestures, straight destinations, DPR3/zoom, 
   }
 });
 
-test("Tutorial: free placement, normal first capture, fog markers, resume and result overlay", async ({
-  browser,
-}) => {
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 960 },
-  });
-  const page = await context.newPage();
+function tutorialSnapshot(page: Page) {
   let snapshot: Snapshot | undefined;
   page.on("websocket", (ws) =>
     ws.on("framereceived", ({ payload }) => {
@@ -521,90 +515,243 @@ test("Tutorial: free placement, normal first capture, fog markers, resume and re
           ) ?? snapshot;
     }),
   );
-  async function move(x: number, y: number) {
-    const canvas = page.locator("canvas");
-    await canvas.scrollIntoViewIfNeeded();
-    const rect = (await canvas.boundingBox())!;
-    const view = await canvas.evaluate((el) => ({
-      left: Number(el.getAttribute("data-map-left")),
-      top: Number(el.getAttribute("data-map-top")),
-      size: Number(el.getAttribute("data-map-size")),
-    }));
-    await canvas.click({
-      position: {
-        x: ((x - view.left) / view.size) * rect.width,
-        y: ((y - view.top) / view.size) * rect.height,
-      },
-    });
-  }
-  try {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Play tutorial" }).click();
-    await expect(
-      page.getByText("Establish your Core", { exact: true }),
-    ).toBeVisible();
-    await expect.poll(() => snapshot?.tutorial?.stage).toBe("place");
-    expect(snapshot!.buildings.every((b) => b.power === undefined)).toBe(true);
-    await move(40, 100);
-    await move(40, 100); // Off the suggestion, but legal.
-    await expect(
-      page.getByText("Take Power with you", { exact: true }),
-    ).toBeVisible();
-    await page.keyboard.press("e");
-    await expect(
-      page.getByText("Capture your first Plant", { exact: true }),
-    ).toBeVisible();
-    await move(60.44303983449936, 99.51075091958046);
-    await expect.poll(() => snapshot?.targetId).toBe("b0");
-    await page.keyboard.press("e");
-    await expect(
-      page.getByText("Find the enemy Core", { exact: true }),
-    ).toBeVisible();
-    expect(
-      snapshot!.tutorial!.markers.some((m) => m.label === "Enemy Core"),
-    ).toBe(true);
-    expect(
-      snapshot!.buildings.some((b) => b.kind === "core" && b.teamId === 1),
-    ).toBe(false);
-    const version = snapshot!.mapVersion;
-    await page.reload();
-    await expect(
-      page.getByText("Find the enemy Core", { exact: true }),
-    ).toBeVisible();
-    expect(snapshot!.mapVersion).toBe(version);
-    await page.getByRole("button", { name: "Surrender your Core" }).click();
-    const panel = page.getByRole("region", { name: "Match result" });
-    await expect(panel).toBeVisible();
-    await expect(
-      panel.getByRole("heading", { name: "Practice ended" }),
-    ).toBeVisible();
-    await expect
-      .poll(async () => {
-        const r = await panel.boundingBox(),
-          b = await page.locator(".board").boundingBox();
-        return (
-          !!r &&
-          !!b &&
-          r.x >= b.x &&
-          r.y >= b.y &&
-          r.x + r.width <= b.x + b.width &&
-          r.y + r.height <= b.y + b.height
-        );
-      })
-      .toBe(true);
+  return () => snapshot!;
+}
+async function mapPoint(page: Page, x: number, y: number) {
+  const canvas = page.locator("canvas");
+  await canvas.scrollIntoViewIfNeeded();
+  const rect = (await canvas.boundingBox())!;
+  const view = await canvas.evaluate((el) => ({
+    left: Number(el.getAttribute("data-map-left")),
+    top: Number(el.getAttribute("data-map-top")),
+    size: Number(el.getAttribute("data-map-size")),
+  }));
+  await canvas.click({
+    position: {
+      x: ((x - view.left) / view.size) * rect.width,
+      y: ((y - view.top) / view.size) * rect.height,
+    },
+  });
+}
+async function selectTutorial(page: Page, part: number) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Play tutorial" }).click();
+  const menu = page.getByRole("dialog", { name: "Choose a tutorial" });
+  await expect(menu.getByRole("button")).toHaveCount(5);
+  if (part === 1)
     await page.screenshot({
-      path: "outputs/screenshots/tutorial-result-desktop.png",
+      path: "outputs/screenshots/tutorial-menu.png",
       fullPage: true,
     });
-    await panel.getByRole("button", { name: "Restart tutorial" }).click();
+  await menu.getByRole("button", { name: new RegExp(`^${part}\\.`) }).click();
+}
+test("Tutorial Part 1: ordered movement and gestures, result, Next opens auto-placed Part 2", async ({
+  page,
+}) => {
+  const view = tutorialSnapshot(page);
+  await selectTutorial(page, 1);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("place");
+  expect(view().buildings.every((b) => b.power === undefined)).toBe(true);
+  await mapPoint(page, 45, 100);
+  expect(view().phase).toBe("placement");
+  await mapPoint(page, 45, 100);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("move");
+  await mapPoint(page, 45, 110);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("half");
+  await mapPoint(page, 45, 100);
+  await expect
+    .poll(() => view().players.find((p) => p.id === view().selfId)?.y)
+    .toBeLessThan(102);
+  await page.keyboard.press("e");
+  await expect.poll(() => view()?.tutorial?.stage).toBe("max");
+  await page.keyboard.press("e");
+  await page.keyboard.press("e");
+  await expect.poll(() => view()?.tutorial?.stage).toBe("deposit");
+  await page.keyboard.down("e");
+  await page.waitForTimeout(550);
+  await page.keyboard.up("e");
+  const result = page.getByRole("region", { name: "Match result" });
+  await expect(
+    result.getByRole("heading", { name: "Tutorial complete" }),
+  ).toBeVisible();
+  await expect(result.getByText("Part 1 objective completed.")).toBeVisible();
+  await result.getByRole("button", { name: "Next tutorial" }).click();
+  await expect.poll(() => view()?.tutorial?.part).toBe(2);
+  expect(view().phase).toBe("playing");
+  expect(view().tutorial?.stage).toBe("firstPlant");
+  await page.getByRole("button", { name: "Leave room immediately" }).click();
+});
+
+test("Tutorial Part 2: actual Plant production, full Fort cost, resume and next part", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const view = tutorialSnapshot(page);
+  await selectTutorial(page, 2);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("firstPlant");
+  await page.keyboard.press("e");
+  await expect
+    .poll(() => view().players.find((p) => p.id === view().selfId)!.power)
+    .toBe(6);
+  await mapPoint(page, 60.443, 99.511);
+  await expect.poll(() => view()?.targetId).toBe("b0");
+  await page.keyboard.press("e");
+  await expect.poll(() => view()?.tutorial?.stage).toBe("fort");
+  const version = view().mapVersion;
+  await page.reload();
+  await expect.poll(() => view()?.tutorial?.stage).toBe("fort");
+  expect(view().mapVersion).toBe(version);
+  await expect
+    .poll(() => view()?.buildings.find((b) => b.id === "b0")?.power, {
+      timeout: 40_000,
+    })
+    .toBeGreaterThan(12);
+  await page.keyboard.press("e");
+  await page.keyboard.press("e");
+  await expect.poll(() => view()?.tutorial?.stage).toBe("fort");
+  await mapPoint(page, 65.441, 56.962);
+  await expect.poll(() => view()?.targetId, { timeout: 10_000 }).toBe("b14");
+  await page.keyboard.press("e");
+  const result = page.getByRole("region", { name: "Match result" });
+  await expect(
+    result.getByRole("heading", { name: "Tutorial complete" }),
+  ).toBeVisible();
+  await result.getByRole("button", { name: "Next tutorial" }).click();
+  await expect.poll(() => view()?.tutorial?.part).toBe(3);
+  await page.getByRole("button", { name: "Leave room immediately" }).click();
+});
+
+test("Tutorial Part 3: ordinary keyboard sprints catch moving opponent and complete", async ({
+  page,
+}) => {
+  const view = tutorialSnapshot(page);
+  await selectTutorial(page, 3);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("chase");
+  await expect(page.locator(".tutorial-card small")).toHaveCount(0);
+  await expect(page.locator(".tutorial-card")).not.toContainText("coast");
+  await page.keyboard.press("e");
+  await expect
+    .poll(() => view().players.find((p) => p.id === view().selfId)!.power)
+    .toBeGreaterThan(20);
+  await page.keyboard.down("d");
+  await page.keyboard.press("q");
+  await expect
+    .poll(() => view()?.targetId, { timeout: 3000 })
+    .toMatch(/^practice-/);
+  await page.keyboard.press("e");
+  await expect(
+    page.getByRole("heading", { name: "Tutorial complete", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.up("d");
+  await page.getByRole("button", { name: "Next tutorial" }).click();
+  await expect.poll(() => view()?.tutorial?.part).toBe(4);
+  await page.getByRole("button", { name: "Leave room immediately" }).click();
+});
+
+test("Tutorial Part 4: narrow touch menu, no markers until shared discovery, final result only Home", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 800 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const view = tutorialSnapshot(page);
+  try {
+    await selectTutorial(page, 4);
+    await expect.poll(() => view()?.tutorial?.stage).toBe("frontier");
+    expect(view().tutorial!.markers).toEqual([]);
     await expect(
-      page.getByText("Establish your Core", { exact: true }),
+      page.getByText(/Travel light: leave stored Power/),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Leave room immediately" }).click();
+    await mapPoint(page, 145, 150);
+    await expect
+      .poll(() => view()?.tutorial?.stage, { timeout: 12_000 })
+      .toBe("enemyPlant");
+    expect(view().tutorial!.markers[0].label).toBe("Enemy Plant");
+    await page.getByRole("button", { name: "Surrender your Core" }).click();
+    const result = page.getByRole("region", { name: "Match result" });
+    await expect(result).toBeVisible();
+    await expect(result.getByRole("button")).toHaveCount(1);
+    const button = result.getByRole("button", { name: "Back to Home" });
+    const bounds = await button.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+    await page.screenshot({
+      path: "outputs/screenshots/tutorial-four-mobile.png",
+      fullPage: true,
+    });
+    await button.click();
     await expect(
       page.getByRole("button", { name: "Play tutorial" }),
     ).toBeVisible();
   } finally {
     await context.close();
   }
+});
+
+test("Tutorial Part 4: real production and movement fund ordered Plant/Fort/Core victory", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const view = tutorialSnapshot(page);
+  const self = () => view().players.find((p) => p.id === view().selfId)!;
+  async function approach(x: number, y: number) {
+    await mapPoint(page, x, y);
+    await expect
+      .poll(() => Math.hypot(self().x - x, self().y - y), { timeout: 18_000 })
+      .toBeLessThan(1);
+  }
+  async function maxWithdraw() {
+    const before = self().power;
+    await page.keyboard.press("e");
+    await page.keyboard.press("e");
+    await expect.poll(() => self().power).toBeGreaterThan(before);
+  }
+  await selectTutorial(page, 4);
+  await expect.poll(() => view()?.tutorial?.stage).toBe("frontier");
+  await maxWithdraw();
+  await approach(132, 149);
+  await expect.poll(() => view().tutorial?.stage).toBe("enemyPlant");
+  await approach(133.591, 146.862);
+  await expect.poll(() => view().targetId).toBe("b7");
+  await page.keyboard.press("e");
+  await expect.poll(() => view().tutorial?.stage).toBe("enemyFort");
+  await expect(page.locator(".tutorial-card")).toContainText(
+    "stockpile Power near the front line",
+  );
+  await expect(page.locator(".tutorial-card small")).toHaveCount(0);
+  await page.screenshot({
+    path: "outputs/screenshots/tutorial-fort-guide.png",
+    fullPage: true,
+  });
+  await approach(127.922, 136.368);
+  await expect.poll(() => view().targetId).toBe("b12");
+  await page.keyboard.press("e");
+  await expect.poll(() => view().tutorial?.stage).toBe("core");
+  await approach(60.443, 99.511);
+  await expect
+    .poll(() => view().buildings.find((b) => b.id === "b0")!.power, {
+      timeout: 60_000,
+    })
+    .toBeGreaterThanOrEqual(25);
+  await maxWithdraw();
+  await approach(60.076, 119.648);
+  await maxWithdraw();
+  await approach(79.435, 72.491);
+  await maxWithdraw();
+  await approach(145, 150);
+  await expect.poll(() => view().targetId).toMatch(/^core-practice-/);
+  await page.keyboard.press("e");
+  const result = page.getByRole("region", { name: "Match result" });
+  await expect(
+    result.getByRole("heading", { name: "Tutorial complete", exact: true }),
+  ).toBeVisible();
+  await expect(result.getByRole("button")).toHaveCount(1);
+  await page.screenshot({
+    path: "outputs/screenshots/tutorial-four-victory.png",
+    fullPage: true,
+  });
+  await result.getByRole("button", { name: "Back to Home" }).click();
 });

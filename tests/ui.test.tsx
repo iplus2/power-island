@@ -104,6 +104,8 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
           const q = { x, y };
           if (
             inZone(q, p.zone, "1v1") &&
+            // Avoid the exact zone edge: pixel round trips may reconstruct 100 as 99.99999999999999.
+            Math.abs(q.x - 100) >= 5 &&
             validPoint(q, engine.match.boundary, 3) &&
             engine.match.buildings.every((b) => distance(b, q) >= 8)
           )
@@ -166,7 +168,7 @@ test("React UI over real network: create, lobby, click placement, E/hold/double/
     assert.ok(p.sprintTicks > 0);
     fireEvent.click(view.getByText("How to play ↗"));
     assert.ok(view.getByRole("dialog"));
-    assert.ok(view.getByText(/Only owned buildings produce/));
+    assert.ok(view.getByText(/Only owned buildings produce Power/));
     fireEvent.click(view.getByLabelText("Close guide"));
     fireEvent.click(view.getByText("Surrender your Core"));
     await waitFor(() => assert.ok(view.getByText("Coral team wins.")));

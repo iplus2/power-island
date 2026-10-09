@@ -57,15 +57,23 @@ export type PlayerView = Omit<
   Player,
   "zone" | "order" | "placementAt" | "disconnectedAt"
 >;
+export type TutorialPart = 1 | 2 | 3 | 4;
 export type TutorialStage =
   | "place"
-  | "withdraw"
+  | "move"
+  | "half"
+  | "max"
+  | "deposit"
   | "firstPlant"
+  | "fort"
+  | "chase"
   | "frontier"
-  | "expand"
+  | "enemyPlant"
+  | "enemyFort"
   | "core"
   | "complete";
 export type TutorialView = {
+  part: TutorialPart;
   stage: TutorialStage;
   markers: (Point & { label: string })[];
 };

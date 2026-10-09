@@ -424,7 +424,7 @@ test("1v1 wire recovery, metadata suppression, explicit Leave, host transfer and
   }
 });
 
-test("Solo tutorial over Socket.IO: private room, progress, ordinary early victory, fixed restart, resume and cleanup", async () => {
+test("Solo tutorial over Socket.IO: private room, Part 4 early victory, fixed restart, resume and cleanup", async () => {
   const server = createGameServer();
   await new Promise<void>((resolve) =>
     server.http.listen(0, "127.0.0.1", resolve),
@@ -446,18 +446,19 @@ test("Solo tutorial over Socket.IO: private room, progress, ordinary early victo
     const s = await client();
     const placement = waitState(
       s,
-      (v) => v.phase === "placement" && v.tutorial?.stage === "place",
+      (v) => v.phase === "playing" && v.tutorial?.stage === "frontier",
     );
     const joined = await request(s, "join", {
       create: true,
       mode: "1v1",
       name: "Learner",
       tutorial: true,
+      tutorialPart: 4,
     });
     assert.ok(joined.ok);
     const view = await placement;
-    assert.equal(view.zones[0].zone, 0);
-    assert.ok(view.buildings.every((b) => b.power === undefined));
+    assert.equal(view.tutorial?.part, 4);
+    assert.deepEqual(view.tutorial?.markers, []);
     const engine = server.rooms.get(joined.code!)!;
     assert.equal(engine.match.seed, 175);
     const outsider = await client();
@@ -466,9 +467,7 @@ test("Solo tutorial over Socket.IO: private room, progress, ordinary early victo
         .ok,
       false,
     );
-    const playing = waitState(s, (v) => v.tutorial?.stage === "withdraw");
-    assert.ok((await request(s, "place", { x: 40, y: 100 })).ok);
-    await playing;
+
     const p = engine.player(joined.playerId!)!;
     const core = engine.match.buildings.find(
       (b) => b.id === engine.player(engine.tutorial!.opponentId)!.coreId,
@@ -481,19 +480,20 @@ test("Solo tutorial over Socket.IO: private room, progress, ordinary early victo
     s.emit("interactResolve", "half");
     const result = await won;
     assert.equal(result.result?.winner, 0);
-    assert.equal(engine.tutorial!.plants.size, 0);
+    assert.equal(result.tutorial?.stage, "complete");
+    assert.equal((await request(s, "tutorialNext")).ok, false);
     const restarted = waitState(
       s,
-      (v) => v.phase === "placement" && v.mapVersion !== view.mapVersion,
+      (v) => v.phase === "playing" && v.mapVersion !== view.mapVersion,
     );
     assert.ok((await request(s, "rematch")).ok);
     const restartView = await restarted;
-    assert.equal(restartView.tutorial?.stage, "place");
+    assert.equal(restartView.tutorial?.stage, "frontier");
     assert.deepEqual(restartView.boundary, view.boundary);
     s.disconnect();
     await new Promise((resolve) => setTimeout(resolve, 50));
     const resumed = await client();
-    const restored = waitState(resumed, (v) => v.phase === "placement");
+    const restored = waitState(resumed, (v) => v.phase === "playing");
     assert.ok(
       (
         await request(resumed, "resume", {

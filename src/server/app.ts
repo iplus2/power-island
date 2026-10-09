@@ -180,7 +180,14 @@ export function createGameServer() {
           mode?: unknown;
           create?: unknown;
           tutorial?: unknown;
+          tutorialPart?: unknown;
         };
+        if (
+          data.tutorial === true &&
+          data.tutorialPart !== undefined &&
+          ![1, 2, 3, 4].includes(data.tutorialPart as number)
+        )
+          throw new Error("Choose a tutorial part.");
         const name =
           typeof data?.name === "string" ? data.name.trim().slice(0, 18) : "";
         if (!name) throw new Error("Enter a callsign.");
@@ -215,7 +222,11 @@ export function createGameServer() {
           token = randomBytes(32).toString("hex");
         engine.addPlayer(id, name);
         if (data.create === true && data.tutorial === true)
-          engine.setupTutorial(id);
+          engine.setupTutorial(
+            id,
+            Date.now(),
+            (data.tutorialPart ?? 1) as 1 | 2 | 3 | 4,
+          );
         bind(socket, code, id, token);
         ack({ ok: true, code, playerId: id, token });
         publish(engine);
@@ -262,7 +273,7 @@ export function createGameServer() {
         ack({ ok: false, error: (error as Error).message });
       }
     });
-    for (const event of ["start", "rematch"] as const)
+    for (const event of ["start", "rematch", "tutorialNext"] as const)
       socket.on(event, (ack: (r: Reply) => void) => {
         const c = context(socket);
         if (!c) return;
@@ -270,6 +281,7 @@ export function createGameServer() {
           if (c.engine.hostId !== c.id)
             throw new Error("Only the room host can do this.");
           if (event === "start") c.engine.start();
+          else if (event === "tutorialNext") c.engine.nextTutorial();
           else c.engine.rematch();
           publish(c.engine);
           if (typeof ack === "function") ack({ ok: true });

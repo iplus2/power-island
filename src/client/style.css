@@ -523,11 +523,6 @@ input::placeholder {
 .tutorial-card p {
   line-height: 1.6;
 }
-.tutorial-card small {
-  display: block;
-  color: var(--muted);
-  line-height: 1.5;
-}
 .match-result-layer {
   position: absolute;
   inset: 0;
@@ -1099,4 +1094,26 @@ kbd {
 }
 .hud > .leave {
   display: block;
+}
+
+.tutorial-options {
+  display: grid;
+  gap: 12px;
+}
+.tutorial-options button {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 16px;
+  white-space: normal;
+}
+.tutorial-options span {
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 13px;
+}
+.tutorial-picker {
+  max-height: 90dvh;
+  overflow-y: auto;
 }

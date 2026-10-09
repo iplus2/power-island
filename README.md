@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173` in separate tabs for each player. The backend uses port 3001. Home also offers **Play tutorial**, a solo practice match on a fixed island with a stationary opponent and optional map guidance.
+Open `http://localhost:5173` in separate tabs for each player. The backend uses port 3001. Home also offers **Play tutorial**, a selector for four guided solo lessons: Core and controls, attacking, sprint pursuit, and the front line. Each uses the same fixed island. **How to play** offers a concise control and combat reference.
 
 ```sh
 npm run check
@@ -31,11 +31,11 @@ npm run dev
 npm run test:browser
 ```
 
-Stop development services after testing. External deployment validation is manual and requires `TEST_SERVER_URL`; optionally set `TEST_ALLOWED_ORIGIN`. See [verification status](outputs/development_status.md).
+Stop development services after testing. External deployment validation is manual and requires `TEST_SERVER_URL`; optionally set `TEST_ALLOWED_ORIGIN`. See [verification status](outputs/development_status.md). The current v0.9 changes are verified locally; production remains on v0.8.
 
 ## Project guide
 
-- [Game rules](core_game_spec.md): the single current specification, v0.8.
+- [Game rules](core_game_spec.md): the single current specification, v0.9.
 - [Collaboration guide](AGENTS.md): implementation and verification conventions.
 - [Documentation index](outputs/README.md): current status and evidence.
 
